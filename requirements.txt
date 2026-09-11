@@ -1,10 +1,9 @@
+
 streamlit
 numpy
 pandas
 scikit-learn
 joblib
 Pillow
-torch
-transformers
-accelerate
-safetensors
+gradio_client
+
