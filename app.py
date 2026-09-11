@@ -89,7 +89,12 @@ prototype_images = artifacts[
 @st.cache_resource
 def load_medgemma_client():
 
-    return Client(HF_SPACE)
+    hf_token = st.secrets["HF_TOKEN"]
+
+    return Client(
+        HF_SPACE,
+        token=hf_token,
+    )
 
 
 # ============================================================
