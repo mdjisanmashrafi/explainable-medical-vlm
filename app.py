@@ -6,9 +6,7 @@ import streamlit as st
 from PIL import Image
 from gradio_client import Client, handle_file
 
-from src.retrieval import (
-    load_retrieval_artifacts,
-)
+from src.retrieval import load_retrieval_artifacts
 
 
 # ============================================================
@@ -44,7 +42,6 @@ try:
     artifacts = load_artifacts()
 
 except Exception as e:
-
     st.error("Failed to load retrieval artifacts.")
     st.exception(e)
     st.stop()
@@ -63,7 +60,6 @@ prototype_images = artifacts["prototype_images"]
 
 @st.cache_resource
 def load_medgemma_client():
-
     return Client(HF_SPACE)
 
 
@@ -92,7 +88,7 @@ def query_medgemma(image, question):
         result = client.predict(
             handle_file(image_path),
             question,
-            api_name="/predict",
+            api_name="/analyze_image",
         )
 
         return result
@@ -234,10 +230,6 @@ with col_info:
     st.markdown("### Image Analysis")
 
     st.write(
-        f"**Format:** {image.format or 'PNG'}"
-    )
-
-    st.write(
         f"**Resolution:** {image.width} × {image.height}"
     )
 
@@ -246,7 +238,8 @@ with col_info:
     )
 
     st.write(
-        "**Retrieval database:** 1,793 medical cases"
+        "**Retrieval database:** "
+        f"{len(visual_embeddings):,} medical cases"
     )
 
 
@@ -354,8 +347,7 @@ st.divider()
 st.subheader("4. Prototype Explorer")
 
 prototype_options = sorted(
-    prototype_summary["prototype_id"]
-    .unique()
+    prototype_summary["prototype_id"].unique()
 )
 
 
@@ -371,8 +363,7 @@ selected_prototype = st.selectbox(
 # ============================================================
 
 selected_summary = prototype_summary[
-    prototype_summary["prototype_id"]
-    == selected_prototype
+    prototype_summary["prototype_id"] == selected_prototype
 ]
 
 
@@ -408,22 +399,18 @@ if not selected_summary.empty:
 # REPRESENTATIVE IMAGES
 # ============================================================
 
-st.write(
-    "### Representative Medical Cases"
-)
+st.write("### Representative Medical Cases")
 
 
 selected_images = prototype_images[
-    prototype_images["prototype_id"]
-    == selected_prototype
+    prototype_images["prototype_id"] == selected_prototype
 ].sort_values("rank")
 
 
 if selected_images.empty:
 
     st.warning(
-        "No representative images were found "
-        "for this prototype."
+        "No representative images were found for this prototype."
     )
 
 else:
@@ -437,9 +424,7 @@ else:
         selected_images.iterrows(),
     ):
 
-        rank = int(
-            image_row["rank"]
-        )
+        rank = int(image_row["rank"])
 
         image_path = (
             ROOT
@@ -532,7 +517,7 @@ with status_col1:
 with status_col2:
 
     st.success(
-        "✓ MedGemma backend connected"
+        "✓ MedGemma backend configured"
     )
 
     st.success(
