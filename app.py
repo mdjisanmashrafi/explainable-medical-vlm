@@ -2,11 +2,15 @@ import os
 import tempfile
 from pathlib import Path
 
+import numpy as np
 import streamlit as st
 from PIL import Image
 from gradio_client import Client, handle_file
 
-from src.retrieval import load_retrieval_artifacts
+from src.retrieval import (
+    load_retrieval_artifacts,
+    find_similar_embeddings,
+)
 
 
 # ============================================================
@@ -26,7 +30,10 @@ st.set_page_config(
 
 ROOT = Path(__file__).resolve().parent
 
-HF_SPACE = "mdjisanmashrafi/medgemma-medical-backend"
+HF_SPACE = (
+    "mdjisanmashrafi/"
+    "medgemma-medical-backend"
+)
 
 
 # ============================================================
@@ -35,53 +42,91 @@ HF_SPACE = "mdjisanmashrafi/medgemma-medical-backend"
 
 @st.cache_resource
 def load_artifacts():
+
     return load_retrieval_artifacts()
 
 
 try:
+
     artifacts = load_artifacts()
 
 except Exception as e:
-    st.error("Failed to load retrieval artifacts.")
+
+    st.error(
+        "Failed to load retrieval artifacts."
+    )
+
     st.exception(e)
+
     st.stop()
 
 
-visual_embeddings = artifacts["visual_embeddings"]
-valid_indices = artifacts["valid_indices"]
-cluster_labels = artifacts["cluster_labels"]
-prototype_summary = artifacts["prototype_summary"]
-prototype_images = artifacts["prototype_images"]
+visual_embeddings = artifacts[
+    "visual_embeddings"
+]
+
+valid_indices = artifacts[
+    "valid_indices"
+]
+
+cluster_labels = artifacts[
+    "cluster_labels"
+]
+
+prototype_summary = artifacts[
+    "prototype_summary"
+]
+
+prototype_images = artifacts[
+    "prototype_images"
+]
 
 
 # ============================================================
-# LOAD HUGGING FACE GRADIO CLIENT
+# LOAD HUGGING FACE CLIENT
 # ============================================================
 
 @st.cache_resource
 def load_medgemma_client():
+
     return Client(HF_SPACE)
 
 
 # ============================================================
-# MEDGEMMA API FUNCTION
+# SAVE TEMP IMAGE
 # ============================================================
 
-def query_medgemma(image, question):
+def save_temp_image(image):
+
+    tmp = tempfile.NamedTemporaryFile(
+        suffix=".png",
+        delete=False,
+    )
+
+    tmp.close()
+
+    image.save(
+        tmp.name,
+        format="PNG",
+    )
+
+    return tmp.name
+
+
+# ============================================================
+# MEDGEMMA VQA
+# ============================================================
+
+def query_medgemma(
+    image,
+    question,
+):
 
     client = load_medgemma_client()
 
-    with tempfile.NamedTemporaryFile(
-        suffix=".png",
-        delete=False,
-    ) as tmp:
-
-        image.save(
-            tmp.name,
-            format="PNG",
-        )
-
-        image_path = tmp.name
+    image_path = save_temp_image(
+        image
+    )
 
     try:
 
@@ -96,8 +141,56 @@ def query_medgemma(image, question):
     finally:
 
         try:
-            os.remove(image_path)
+
+            os.remove(
+                image_path
+            )
+
         except OSError:
+
+            pass
+
+
+# ============================================================
+# MEDGEMMA VISION EMBEDDING
+# ============================================================
+
+def query_embedding(image):
+
+    client = load_medgemma_client()
+
+    image_path = save_temp_image(
+        image
+    )
+
+    try:
+
+        result = client.predict(
+            handle_file(image_path),
+            api_name="/embed_image",
+        )
+
+        # Gradio JSON output should be a list
+        embedding = np.asarray(
+            result,
+            dtype=np.float32,
+        )
+
+        # Flatten possible [1, 1152] shape
+        embedding = embedding.reshape(-1)
+
+        return embedding
+
+    finally:
+
+        try:
+
+            os.remove(
+                image_path
+            )
+
+        except OSError:
+
             pass
 
 
@@ -105,7 +198,9 @@ def query_medgemma(image, question):
 # HEADER
 # ============================================================
 
-st.title("🩺 Explainable Medical VLM")
+st.title(
+    "🩺 Explainable Medical VLM"
+)
 
 st.markdown(
     """
@@ -123,7 +218,9 @@ and visually similar prototype cases.
 
 with st.sidebar:
 
-    st.header("System Information")
+    st.header(
+        "System Information"
+    )
 
     st.metric(
         "Medical cases",
@@ -144,35 +241,35 @@ with st.sidebar:
 
     st.markdown(
         """
-        **Pipeline**
+**Pipeline**
 
-        Medical Image  
-        ↓  
-        MedGemma  
-        ↓  
-        Medical VQA Answer
+Medical Image  
+↓  
+MedGemma  
+↓  
+Medical VQA Answer
 
-        **Visual Explanation**
+**Visual Explanation**
 
-        Medical Image  
-        ↓  
-        MedGemma Vision Encoder  
-        ↓  
-        1,152-dimensional embedding  
-        ↓  
-        Similarity Retrieval  
-        ↓  
-        Prototype Identification  
-        ↓  
-        Representative Cases
-        """
+Medical Image  
+↓  
+MedGemma Vision Encoder  
+↓  
+1,152-dimensional embedding  
+↓  
+Similarity Retrieval  
+↓  
+Prototype Identification  
+↓  
+Representative Cases
+"""
     )
 
     st.divider()
 
     st.caption(
-        "MedGemma inference is provided through a "
-        "GPU-enabled Hugging Face Space."
+        "MedGemma inference is provided through "
+        "a GPU-enabled Hugging Face Space."
     )
 
 
@@ -180,19 +277,25 @@ with st.sidebar:
 # IMAGE UPLOAD
 # ============================================================
 
-st.subheader("1. Upload Medical Image")
+st.subheader(
+    "1. Upload Medical Image"
+)
 
 uploaded_file = st.file_uploader(
     "Choose a medical image",
-    type=["png", "jpg", "jpeg"],
+    type=[
+        "png",
+        "jpg",
+        "jpeg",
+    ],
 )
 
 
 if uploaded_file is None:
 
     st.info(
-        "Upload a medical image to begin the explainable "
-        "medical VLM analysis."
+        "Upload a medical image to begin "
+        "the explainable medical VLM analysis."
     )
 
     st.stop()
@@ -208,7 +311,7 @@ image = Image.open(
 
 
 # ============================================================
-# DISPLAY INPUT IMAGE
+# DISPLAY IMAGE
 # ============================================================
 
 col_image, col_info = st.columns(
@@ -227,14 +330,18 @@ with col_image:
 
 with col_info:
 
-    st.markdown("### Image Analysis")
-
-    st.write(
-        f"**Resolution:** {image.width} × {image.height}"
+    st.markdown(
+        "### Image Analysis"
     )
 
     st.write(
-        "**Analysis engine:** MedGemma 1.5 4B"
+        f"**Resolution:** "
+        f"{image.width} × {image.height}"
+    )
+
+    st.write(
+        "**Analysis engine:** "
+        "MedGemma 1.5 4B"
     )
 
     st.write(
@@ -244,16 +351,22 @@ with col_info:
 
 
 # ============================================================
-# MEDGEMMA VQA SECTION
+# MEDICAL VQA
 # ============================================================
 
 st.divider()
 
-st.subheader("2. Medical VQA")
+st.subheader(
+    "2. Medical VQA"
+)
 
 question = st.text_input(
     "Ask a question about the image",
-    value="What findings are visible in this image?",
+
+    value=(
+        "What findings are visible "
+        "in this image?"
+    ),
 )
 
 
@@ -294,22 +407,115 @@ if st.button(
 
 
 # ============================================================
-# RETRIEVAL DATABASE
+# LIVE VISUAL RETRIEVAL
 # ============================================================
 
 st.divider()
 
-st.subheader("3. Visual Retrieval Database")
+st.subheader(
+    "3. Visual Retrieval Database"
+)
 
 st.info(
     """
-    The retrieval database contains precomputed visual embeddings
-    generated using the MedGemma vision encoder. The uploaded image
-    can be compared against these learned representations to identify
-    visually related medical cases.
-    """
+The uploaded image is encoded using the same MedGemma vision
+encoder used to construct the retrieval database. Its 1,152-dimensional
+representation is compared against 1,793 precomputed medical cases
+using cosine similarity.
+"""
 )
 
+
+# ------------------------------------------------------------
+# RETRIEVAL BUTTON
+# ------------------------------------------------------------
+
+if st.button(
+    "Find Visually Similar Cases",
+    use_container_width=True,
+):
+
+    with st.spinner(
+        "Generating MedGemma visual embedding "
+        "and searching the medical case database..."
+    ):
+
+        try:
+
+            query_embedding_vector = (
+                query_embedding(image)
+            )
+
+            # ------------------------------------------------
+            # Validate
+            # ------------------------------------------------
+
+            if (
+                query_embedding_vector.shape[0]
+                != visual_embeddings.shape[1]
+            ):
+
+                raise ValueError(
+                    "The returned MedGemma embedding "
+                    "has the wrong dimension: "
+                    f"{query_embedding_vector.shape[0]} "
+                    f"instead of "
+                    f"{visual_embeddings.shape[1]}."
+                )
+
+            # ------------------------------------------------
+            # Retrieval
+            # ------------------------------------------------
+
+            retrieval_results = (
+                find_similar_embeddings(
+                    query_embedding_vector,
+                    visual_embeddings,
+                    valid_indices,
+                    cluster_labels,
+                    top_k=5,
+                )
+            )
+
+            # ------------------------------------------------
+            # Store in session
+            # ------------------------------------------------
+
+            st.session_state[
+                "query_embedding"
+            ] = query_embedding_vector
+
+            st.session_state[
+                "retrieval_results"
+            ] = retrieval_results
+
+            # Most similar case determines prototype
+            recommended_prototype = (
+                retrieval_results[0][
+                    "prototype_id"
+                ]
+            )
+
+            st.session_state[
+                "recommended_prototype"
+            ] = recommended_prototype
+
+            st.success(
+                "Visual retrieval complete."
+            )
+
+        except Exception as e:
+
+            st.error(
+                "Visual retrieval failed."
+            )
+
+            st.exception(e)
+
+
+# ============================================================
+# DATABASE METRICS
+# ============================================================
 
 col1, col2, col3 = st.columns(3)
 
@@ -339,31 +545,95 @@ with col3:
 
 
 # ============================================================
+# RETRIEVAL RESULTS
+# ============================================================
+
+retrieval_results = st.session_state.get(
+    "retrieval_results"
+)
+
+
+if retrieval_results:
+
+    st.write(
+        "### Most Similar Medical Cases"
+    )
+
+    for result in retrieval_results:
+
+        st.write(
+            f"**Rank {result['rank']}** — "
+            f"Dataset index "
+            f"`{result['dataset_index']}` — "
+            f"Prototype "
+            f"`P{result['prototype_id']:02d}` — "
+            f"Similarity "
+            f"`{result['similarity']:.4f}`"
+        )
+
+
+# ============================================================
 # PROTOTYPE EXPLORER
 # ============================================================
 
 st.divider()
 
-st.subheader("4. Prototype Explorer")
+st.subheader(
+    "4. Prototype Explorer"
+)
+
+
+# ------------------------------------------------------------
+# Recommended prototype
+# ------------------------------------------------------------
+
+recommended_prototype = (
+    st.session_state.get(
+        "recommended_prototype"
+    )
+)
+
 
 prototype_options = sorted(
-    prototype_summary["prototype_id"].unique()
+    prototype_summary[
+        "prototype_id"
+    ].unique()
 )
+
+
+if recommended_prototype is not None:
+
+    default_index = (
+        prototype_options.index(
+            recommended_prototype
+        )
+    )
+
+else:
+
+    default_index = 0
 
 
 selected_prototype = st.selectbox(
     "Explore a learned visual prototype",
+
     prototype_options,
-    format_func=lambda x: f"P{x:02d}",
+
+    index=default_index,
+
+    format_func=lambda x:
+        f"P{x:02d}",
 )
 
 
 # ============================================================
-# SELECTED PROTOTYPE SUMMARY
+# PROTOTYPE SUMMARY
 # ============================================================
 
 selected_summary = prototype_summary[
-    prototype_summary["prototype_id"] == selected_prototype
+    prototype_summary[
+        "prototype_id"
+    ] == selected_prototype
 ]
 
 
@@ -391,7 +661,11 @@ if not selected_summary.empty:
 
         st.metric(
             "Representative index",
-            int(row["representative_dataset_index"]),
+            int(
+                row[
+                    "representative_dataset_index"
+                ]
+            ),
         )
 
 
@@ -399,47 +673,99 @@ if not selected_summary.empty:
 # REPRESENTATIVE IMAGES
 # ============================================================
 
-st.write("### Representative Medical Cases")
+st.write(
+    "### Representative Medical Cases"
+)
 
 
 selected_images = prototype_images[
-    prototype_images["prototype_id"] == selected_prototype
-].sort_values("rank")
+    prototype_images[
+        "prototype_id"
+    ] == selected_prototype
+].sort_values(
+    "rank"
+)
 
 
-if selected_images.empty:
+# ------------------------------------------------------------
+# Remove duplicate representative paths
+# ------------------------------------------------------------
+
+seen_paths = set()
+
+unique_images = []
+
+for _, image_row in selected_images.iterrows():
+
+    rank = int(
+        image_row["rank"]
+    )
+
+    image_path = (
+        ROOT
+        / "representative_images"
+        / f"P{selected_prototype:02d}"
+        / f"representative_{rank}.png"
+    )
+
+    path_key = str(
+        image_path.resolve()
+    )
+
+    if path_key in seen_paths:
+
+        continue
+
+    seen_paths.add(
+        path_key
+    )
+
+    unique_images.append(
+        (image_row, image_path)
+    )
+
+    if len(unique_images) >= 3:
+
+        break
+
+
+if not unique_images:
 
     st.warning(
-        "No representative images were found for this prototype."
+        "No representative images were found "
+        "for this prototype."
     )
 
 else:
 
     columns = st.columns(
-        min(3, len(selected_images))
+        min(
+            3,
+            len(unique_images)
+        )
     )
 
-    for column, (_, image_row) in zip(
+    for column, (
+        image_row,
+        image_path,
+    ) in zip(
         columns,
-        selected_images.iterrows(),
+        unique_images,
     ):
-
-        rank = int(image_row["rank"])
-
-        image_path = (
-            ROOT
-            / "representative_images"
-            / f"P{selected_prototype:02d}"
-            / f"representative_{rank}.png"
-        )
 
         with column:
 
             if image_path.exists():
 
-                representative_image = Image.open(
-                    image_path
-                ).convert("RGB")
+                representative_image = (
+                    Image.open(
+                        image_path
+                    ).convert("RGB")
+                )
+
+                rank = int(
+                    image_row["rank"]
+                )
 
                 st.image(
                     representative_image,
@@ -450,46 +776,85 @@ else:
                     use_container_width=True,
                 )
 
-                if "distance_to_centroid" in image_row:
+                if (
+                    "distance_to_centroid"
+                    in image_row
+                ):
 
                     st.caption(
-                        "Distance to prototype centroid: "
+                        "Distance to prototype "
+                        "centroid: "
                         f"{float(image_row['distance_to_centroid']):.4f}"
                     )
 
             else:
 
                 st.error(
-                    f"Image not found: {image_path}"
+                    f"Image not found: "
+                    f"{image_path}"
                 )
 
 
 # ============================================================
-# EXPLANATION
+# EXPLAINABILITY
 # ============================================================
 
 st.divider()
 
-st.subheader("5. Explainability")
-
-st.markdown(
-    f"""
-    **Prototype P{selected_prototype:02d}** represents a group of
-    visually related medical images discovered in the learned
-    embedding space.
-
-    The system combines:
-
-    - **MedGemma** for medical visual question answering
-    - **MedGemma vision embeddings** for visual representation
-    - **Cosine similarity** for visual similarity measurement
-    - **30 learned prototypes** for organizing the embedding space
-    - **Representative medical cases** for interpretable comparison
-
-    The prototype view provides a visual explanation of the learned
-    representation rather than relying only on a single black-box output.
-    """
+st.subheader(
+    "5. Explainability"
 )
+
+
+if recommended_prototype is not None:
+
+    st.markdown(
+        f"""
+### Retrieved Prototype: P{selected_prototype:02d}
+
+The uploaded medical image was encoded using the MedGemma
+vision encoder and compared with 1,793 precomputed medical
+visual embeddings.
+
+The most similar cases belong to the learned prototype:
+
+**P{recommended_prototype:02d}**
+"""
+    )
+
+    if retrieval_results:
+
+        best_match = retrieval_results[0]
+
+        st.metric(
+            "Best visual similarity",
+            f"{best_match['similarity']:.4f}",
+        )
+
+    st.markdown(
+        """
+The system combines:
+
+- **MedGemma** for medical visual question answering
+- **MedGemma vision encoder** for visual representation
+- **1,152-dimensional embeddings** for image representation
+- **Cosine similarity** for visual retrieval
+- **1,793 medical cases** as the retrieval database
+- **30 learned prototypes** for organizing the visual space
+- **Representative cases** for interpretable comparison
+
+This provides an example-based explanation of the model's
+visual representation rather than relying only on a single
+black-box prediction.
+"""
+    )
+
+else:
+
+    st.info(
+        "Run visual retrieval above to generate "
+        "an image-specific prototype explanation."
+    )
 
 
 # ============================================================
@@ -498,7 +863,9 @@ st.markdown(
 
 st.divider()
 
-st.subheader("6. System Status")
+st.subheader(
+    "6. System Status"
+)
 
 status_col1, status_col2 = st.columns(2)
 
@@ -517,12 +884,21 @@ with status_col1:
 with status_col2:
 
     st.success(
-        "✓ MedGemma backend configured"
+        "✓ MedGemma VQA backend configured"
     )
 
-    st.success(
-        "✓ Hugging Face GPU backend configured"
-    )
+    if retrieval_results:
+
+        st.success(
+            "✓ Live visual retrieval available"
+        )
+
+    else:
+
+        st.info(
+            "○ Run visual retrieval to test "
+            "live embedding search"
+        )
 
 
 # ============================================================
