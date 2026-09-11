@@ -1,36 +1,48 @@
 from pathlib import Path
+
+import joblib
 import numpy as np
 import pandas as pd
-import joblib
+
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
+# ============================================================
+# LOAD ARTIFACTS
+# ============================================================
+
 def load_retrieval_artifacts():
-    """Load all precomputed retrieval artifacts."""
 
     artifacts = {
         "visual_embeddings": np.load(
             ROOT / "visual_embeddings.npy"
         ),
+
         "valid_indices": np.load(
             ROOT / "valid_indices.npy"
         ),
+
         "cluster_labels": np.load(
             ROOT / "cluster_labels.npy"
         ),
+
         "cluster_centroids": np.load(
             ROOT / "cluster_centroids.npy"
         ),
+
         "pca_model": joblib.load(
             ROOT / "pca_model.pkl"
         ),
+
         "pca_scaler": joblib.load(
             ROOT / "pca_scaler.pkl"
         ),
+
         "prototype_summary": pd.read_csv(
             ROOT / "prototype_summary.csv"
         ),
+
         "prototype_images": pd.read_csv(
             ROOT / "prototype_representative_images.csv"
         ),
@@ -39,24 +51,58 @@ def load_retrieval_artifacts():
     return artifacts
 
 
-def cosine_similarity(query, matrix):
-    """Calculate cosine similarity between query and matrix rows."""
+# ============================================================
+# COSINE SIMILARITY
+# ============================================================
 
-    query = np.asarray(query, dtype=np.float32)
-    matrix = np.asarray(matrix, dtype=np.float32)
+def cosine_similarity(
+    query,
+    matrix,
+):
+
+    query = np.asarray(
+        query,
+        dtype=np.float32,
+    )
+
+    matrix = np.asarray(
+        matrix,
+        dtype=np.float32,
+    )
 
     query_norm = np.linalg.norm(query)
 
     if query_norm == 0:
-        return np.zeros(len(matrix))
 
-    matrix_norm = np.linalg.norm(matrix, axis=1)
+        return np.zeros(
+            len(matrix),
+            dtype=np.float32,
+        )
 
-    denominator = matrix_norm * query_norm
-    denominator[denominator == 0] = 1e-12
+    matrix_norm = np.linalg.norm(
+        matrix,
+        axis=1,
+    )
 
-    return np.dot(matrix, query) / denominator
+    denominator = (
+        matrix_norm * query_norm
+    )
 
+    denominator[
+        denominator == 0
+    ] = 1e-12
+
+    scores = np.dot(
+        matrix,
+        query,
+    ) / denominator
+
+    return scores
+
+
+# ============================================================
+# FIND SIMILAR CASES
+# ============================================================
 
 def find_similar_embeddings(
     query_embedding,
@@ -65,25 +111,73 @@ def find_similar_embeddings(
     cluster_labels,
     top_k=5,
 ):
-    """
-    Find the most visually similar precomputed cases.
-    """
+
+    query_embedding = np.asarray(
+        query_embedding,
+        dtype=np.float32,
+    )
+
+    embeddings = np.asarray(
+        embeddings,
+        dtype=np.float32,
+    )
+
+    # --------------------------------------------------------
+    # Validate embedding dimension
+    # --------------------------------------------------------
+
+    if query_embedding.shape[-1] != embeddings.shape[1]:
+
+        raise ValueError(
+            "Embedding dimension mismatch: "
+            f"query={query_embedding.shape[-1]}, "
+            f"database={embeddings.shape[1]}"
+        )
+
+    # --------------------------------------------------------
+    # Similarity
+    # --------------------------------------------------------
 
     scores = cosine_similarity(
         query_embedding,
-        embeddings
+        embeddings,
     )
 
-    top_rows = np.argsort(scores)[::-1][:top_k]
+    # --------------------------------------------------------
+    # Top K
+    # --------------------------------------------------------
+
+    top_rows = np.argsort(
+        scores
+    )[::-1][:top_k]
 
     results = []
 
-    for row_index in top_rows:
-        results.append({
-            "embedding_row": int(row_index),
-            "dataset_index": int(valid_indices[row_index]),
-            "prototype_id": int(cluster_labels[row_index]),
-            "similarity": float(scores[row_index]),
-        })
+    for rank, row_index in enumerate(
+        top_rows,
+        start=1,
+    ):
+
+        results.append(
+            {
+                "rank": rank,
+
+                "embedding_row": int(
+                    row_index
+                ),
+
+                "dataset_index": int(
+                    valid_indices[row_index]
+                ),
+
+                "prototype_id": int(
+                    cluster_labels[row_index]
+                ),
+
+                "similarity": float(
+                    scores[row_index]
+                ),
+            }
+        )
 
     return results
