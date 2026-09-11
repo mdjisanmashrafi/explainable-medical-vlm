@@ -1,15 +1,13 @@
 from pathlib import Path
-
 import numpy as np
 import pandas as pd
 import joblib
-
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
 def load_retrieval_artifacts():
-    """Load prototype/retrieval artifacts."""
+    """Load all precomputed retrieval artifacts."""
 
     artifacts = {
         "visual_embeddings": np.load(
@@ -42,7 +40,7 @@ def load_retrieval_artifacts():
 
 
 def cosine_similarity(query, matrix):
-    """Calculate cosine similarity between query and rows of matrix."""
+    """Calculate cosine similarity between query and matrix rows."""
 
     query = np.asarray(query, dtype=np.float32)
     matrix = np.asarray(matrix, dtype=np.float32)
@@ -55,26 +53,37 @@ def cosine_similarity(query, matrix):
     matrix_norm = np.linalg.norm(matrix, axis=1)
 
     denominator = matrix_norm * query_norm
-
     denominator[denominator == 0] = 1e-12
 
     return np.dot(matrix, query) / denominator
 
 
-def find_similar_embeddings(query_embedding, embeddings, top_k=5):
-    """Return indices and similarity scores for nearest embeddings."""
+def find_similar_embeddings(
+    query_embedding,
+    embeddings,
+    valid_indices,
+    cluster_labels,
+    top_k=5,
+):
+    """
+    Find the most visually similar precomputed cases.
+    """
 
     scores = cosine_similarity(
         query_embedding,
         embeddings
     )
 
-    top_indices = np.argsort(scores)[::-1][:top_k]
+    top_rows = np.argsort(scores)[::-1][:top_k]
 
-    return [
-        {
-            "index": int(i),
-            "similarity": float(scores[i]),
-        }
-        for i in top_indices
-    ]
+    results = []
+
+    for row_index in top_rows:
+        results.append({
+            "embedding_row": int(row_index),
+            "dataset_index": int(valid_indices[row_index]),
+            "prototype_id": int(cluster_labels[row_index]),
+            "similarity": float(scores[row_index]),
+        })
+
+    return results
