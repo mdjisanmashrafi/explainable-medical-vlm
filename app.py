@@ -46,7 +46,7 @@ def inject_custom_css() -> None:
             --border-color: #E5E7EB;
             --text-main: #111827;
             --text-muted: #6B7280;
-            --accent: #2563EB; /* Restrained professional blue */
+            --accent: #2563EB;
             --accent-light: #EFF6FF;
         }
 
@@ -355,62 +355,20 @@ def run_full_pipeline(
             f"{visual_embeddings.shape[1]})."
         )
 
+    # Note: Fetch slightly more than top 3 to allow safe filtering of exact matches and duplicates
     results = find_similar_embeddings(
         query_embedding_vector,
         visual_embeddings,
         valid_indices,
         cluster_labels,
-        top_k=5,
+        top_k=10, 
     )
 
     st.session_state["query_embedding"] = query_embedding_vector
     st.session_state["retrieval_results"] = results
-    st.session_state["recommended_prototype"] = results[0]["prototype_id"]
-
-
-# ============================================================
-# REPRESENTATIVE IMAGE DEDUPLICATION
-# ============================================================
-
-def get_unique_representative_images(
-    prototype_images: pd.DataFrame,
-    prototype_id: int,
-    max_images: int = 3,
-):
-    subset = prototype_images[
-        prototype_images["prototype_id"] == prototype_id
-    ].sort_values("rank")
-
-    seen_keys = set()
-    unique = []
-
-    for _, row in subset.iterrows():
-        rank = int(row["rank"])
-        image_path = (
-            ROOT
-            / "representative_images"
-            / f"P{prototype_id:02d}"
-            / f"representative_{rank}.png"
-        )
-
-        if not image_path.exists():
-            continue
-
-        if "dataset_index" in row and pd.notna(row["dataset_index"]):
-            key = f"idx:{int(row['dataset_index'])}"
-        else:
-            key = f"hash:{hashlib.md5(image_path.read_bytes()).hexdigest()}"
-
-        if key in seen_keys:
-            continue
-
-        seen_keys.add(key)
-        unique.append((row, image_path))
-
-        if len(unique) >= max_images:
-            break
-
-    return unique
+    
+    if results:
+        st.session_state["recommended_prototype"] = results[0].get("prototype_id")
 
 
 # ============================================================
@@ -522,33 +480,91 @@ st.markdown(
 
 st.markdown('<h2 class="section-heading"><span>03</span> Similar Cases</h2>', unsafe_allow_html=True)
 
-recommended_prototype = st.session_state["recommended_prototype"]
 retrieval_results = st.session_state["retrieval_results"]
 
-if retrieval_results and recommended_prototype is not None:
-    unique_images = get_unique_representative_images(prototype_images, recommended_prototype, max_images=3)
-    
-    if not unique_images:
-        st.info("No representative images available for this visual cluster.")
+if retrieval_results:
+    top_unique_cases = []
+    seen_hashes = set()
+
+    for result in retrieval_results:
+        sim = result.get("similarity", 0.0)
+        
+        # 1. Exclude the query image itself (identifying ~100% exact matches)
+        if sim >= 0.999:
+            continue
+            
+        # 2. Resolve the image path safely based on what the backend provides
+        img_path = None
+        
+        # Case A: Backend provides direct path
+        if "image_path" in result and Path(result["image_path"]).exists():
+            img_path = Path(result["image_path"])
+            
+        # Case B: Backend provides dataset_index
+        elif "dataset_index" in result:
+            idx = result["dataset_index"]
+            # Try finding it in prototype_images
+            match = prototype_images[prototype_images["dataset_index"] == idx]
+            if not match.empty:
+                row = match.iloc[0]
+                p_id = int(row["prototype_id"])
+                r_rank = int(row["rank"])
+                potential_path = ROOT / "representative_images" / f"P{p_id:02d}" / f"representative_{r_rank}.png"
+                if potential_path.exists():
+                    img_path = potential_path
+            
+            # Fallback path if it's stored in a general directory
+            if not img_path:
+                alt_path = ROOT / "images" / f"{idx}.png"
+                if alt_path.exists():
+                    img_path = alt_path
+                    
+        # Case C: Backend only provides prototype_id (fallback to top unique representative image)
+        if not img_path and "prototype_id" in result:
+            p_id = result["prototype_id"]
+            subset = prototype_images[prototype_images["prototype_id"] == p_id].sort_values("rank")
+            for _, row in subset.iterrows():
+                r_rank = int(row["rank"])
+                temp_path = ROOT / "representative_images" / f"P{p_id:02d}" / f"representative_{r_rank}.png"
+                if temp_path.exists():
+                    # Ensure we haven't already used this fallback image
+                    temp_hash = hashlib.md5(temp_path.read_bytes()).hexdigest()
+                    if temp_hash not in seen_hashes:
+                        img_path = temp_path
+                        break
+                        
+        # 3. If an image was found, check for duplicates and append
+        if img_path and img_path.exists():
+            file_hash = hashlib.md5(img_path.read_bytes()).hexdigest()
+            if file_hash not in seen_hashes:
+                seen_hashes.add(file_hash)
+                result["resolved_image_path"] = img_path
+                top_unique_cases.append(result)
+                
+        # Stop once we have 3 unique cases
+        if len(top_unique_cases) >= 3:
+            break
+
+    # Ensure final list is explicitly sorted from highest similarity to lowest
+    top_unique_cases = sorted(top_unique_cases, key=lambda x: x.get("similarity", 0.0), reverse=True)
+
+    if not top_unique_cases:
+        st.info("No unique similar cases found.")
     else:
-        # Display the primary gallery once
-        cols = st.columns(len(unique_images))
-        for i, (col, (row, image_path)) in enumerate(zip(cols, unique_images)):
+        cols = st.columns(len(top_unique_cases))
+        for i, (col, case) in enumerate(zip(cols, top_unique_cases)):
             with col:
                 st.markdown('<div class="gallery-item">', unsafe_allow_html=True)
-                rep_image = Image.open(image_path).convert("RGB")
+                rep_image = Image.open(case["resolved_image_path"]).convert("RGB")
                 st.image(rep_image, use_container_width=True)
                 
-                # Retrieve the similarity score for this rank from the retrieval results
-                # Assuming retrieval_results is ordered by rank
-                sim_score = retrieval_results[i]["similarity"] if i < len(retrieval_results) else retrieval_results[0]["similarity"]
-                sim_percentage = f"{sim_score * 100:.1f}%"
+                sim_percentage = f"{case.get('similarity', 0.0) * 100:.1f}%"
                 
                 st.markdown(
                     f"""
                     <div class="gallery-meta">
                         <span>Rank #{i+1}</span>
-                        <span class="similarity-badge">Similarity {sim_percentage}</span>
+                        <span class="similarity-badge">Similarity: {sim_percentage}</span>
                     </div>
                     """, 
                     unsafe_allow_html=True
@@ -562,19 +578,35 @@ if retrieval_results and recommended_prototype is not None:
 
 st.markdown('<h2 class="section-heading"><span>04</span> Prototype Explanation</h2>', unsafe_allow_html=True)
 
-selected_summary = prototype_summary[
-    prototype_summary["prototype_id"] == recommended_prototype
-]
+recommended_prototype = st.session_state.get("recommended_prototype")
 
-if not selected_summary.empty:
-    row = selected_summary.iloc[0]
+if recommended_prototype is not None:
+    selected_summary = prototype_summary[
+        prototype_summary["prototype_id"] == recommended_prototype
+    ]
     
-    col_p1, col_p2, col_p3 = st.columns(3)
-    col_p1.metric("Assigned Prototype", f"P{recommended_prototype:02d}")
-    col_p2.metric("Cluster Size", f"{int(row['num_images'])} verified cases")
-    col_p3.metric("Top Similarity", f"{retrieval_results[0]['similarity'] * 100:.1f}%")
-else:
-    st.info("Prototype statistics are currently unavailable.")
+    if not selected_summary.empty:
+        row = selected_summary.iloc[0]
+        
+        col_p1, col_p2, col_p3 = st.columns(3)
+        col_p1.metric("Assigned Prototype", f"P{recommended_prototype:02d}")
+        col_p2.metric("Cluster Size", f"{int(row['num_images'])} cases")
+        
+        # Display similarity between the query and the cluster centroid/top case
+        top_sim = retrieval_results[0].get("similarity", 0.0) if retrieval_results else 0.0
+        col_p3.metric("Prototype Similarity", f"{top_sim * 100:.1f}%")
+
+        st.markdown(
+            """
+            <div class="research-card" style="margin-top: 1rem;">
+            <p>This visual prototype represents a recurring pattern in the model's learned image representation. 
+            It highlights structural and textural consistencies across the database, but is <strong>not</strong> a clinically validated diagnosis.</p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+    else:
+        st.info("Prototype statistics are currently unavailable.")
 
 
 # ============================================================
@@ -586,10 +618,13 @@ st.markdown('<h2 class="section-heading"><span>05</span> Explainability</h2>', u
 st.markdown(
     """
     <div class="research-card">
-    <p>This system utilizes <strong>Visual Prototype Retrieval</strong> to ground the Vision-Language Model's (VLM) findings. Rather than relying solely on opaque parametric memory, the query image's visual embedding is compared against a verified clinical database.</p>
-    <p>The system identified the uploaded image as belonging to visual cluster <strong>P%02d</strong>. The VLM's analysis is informed by the geometric similarities between your query and the historical cases in this cluster, providing a transparent, retrieval-based explanation for its textual output without requiring manual segmentation maps.</p>
+    <p>This system utilizes <strong>Visual Prototype Retrieval</strong> to provide transparent context for the Vision-Language Model's (VLM) findings. Rather than relying solely on opaque parametric memory, the query image's visual embedding is compared against a verified clinical database.</p>
+    <p>The retrieved prototype provides an external visual evidence layer that contextualizes the VLM's output by showing visually related cases from the reference database.</p>
+    <p style="font-size: 0.9em; color: var(--text-muted); margin-top: 1rem;">
+    <em>Note: Prototype similarity does NOT prove that MedGemma used that specific prototype when generating its answer, nor does it imply a causal medical relationship. It serves strictly as grounded visual context.</em>
+    </p>
     </div>
-    """ % (recommended_prototype if recommended_prototype is not None else 0),
+    """,
     unsafe_allow_html=True
 )
 
