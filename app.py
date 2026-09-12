@@ -616,7 +616,6 @@ if st.session_state["last_error"]:
     st.session_state["last_error"] = None
 
 
-```python
 # ============================================================
 # FOLLOW-UP CONVERSATION
 # ============================================================
@@ -698,7 +697,7 @@ if st.session_state["last_error"]:
         st.session_state["last_error"]
     )
     st.session_state["last_error"] = None
-```
+
 
 
 
