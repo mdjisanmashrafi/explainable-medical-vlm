@@ -758,80 +758,170 @@ def _match_qa(question, qa_dict, threshold=0.45):
 
 
 def answer_user_question(question, context):
-    """Concise, evidence-grounded answers. Never hallucinate."""
+    """
+    Answer questions using only the prepared evidence available for the selected case.
+    """
 
-    if context is None:
-        return "Upload a prepared demonstration image first."
+    q = question.lower().strip()
 
-    q = str(question).lower().strip()
-    if not q:
-        return "Please type a question about the selected image."
-
-    matched = _match_qa(question, context.get("qa") or {})
-    if matched is not None:
-        return str(context["qa"][matched])
-
-    pid = context.get("prototype_id")
-    aff = context.get("prototype_affinity")
-    pid_txt = f"P{int(pid):02d}" if pid is not None else "—"
-    aff_txt = f"{float(aff):.5f}" if aff is not None else "not available"
-    ret = context.get("retrieval") or []
-
-    if any(k in q for k in (
-        "what does the model see", "what does medgemma", "what does the model say",
-        "model observation", "medgemma observation", "what findings",
-        "what is visible", "what do you see", "describe the image", "describe this image",
-    )):
-        obs = context.get("analysis") or "No observation available."
-        return f'MedGemma observation: "{obs}"'
-
-    if any(k in q for k in (
-        "what is the prototype", "which prototype", "why p",
-        "why is this image assigned", "why was this image assigned", "assigned to p",
-    )):
-        if pid is None:
-            return "No visual prototype is associated with this case."
-        return (
-            f"Assigned to visual prototype {pid_txt} with affinity {aff_txt}. "
-            "This is a learned visual grouping, not a clinical diagnosis."
+    # --------------------------------------------------------
+    # 1. WHAT DOES THE MODEL SEE?
+    # --------------------------------------------------------
+    if (
+        "what does the model see" in q
+        or "model see" in q
+        or "observation" in q
+        or "finding" in q and "where" not in q
+    ):
+        observation = (
+            context.get("analysis")
+            or context.get("answer")
+            or context.get("observation")
         )
 
-    if "affinity" in q:
-        if aff is None:
-            return "Prototype affinity is not available for this case."
-        return (
-            f"Prototype affinity is {float(aff):.5f} — cosine similarity to the "
-            "prototype centroid."
+        if observation:
+            return f'**MedGemma observation:** "{observation}"'
+
+        return "No model observation is available for this case."
+
+    # --------------------------------------------------------
+    # 2. WHERE IS THE FINDING?
+    # --------------------------------------------------------
+    if (
+        "where is the finding" in q
+        or "where" in q and "finding" in q
+        or "location" in q
+        or "located" in q
+    ):
+        observation = (
+            context.get("analysis")
+            or context.get("answer")
+            or context.get("observation")
         )
 
-    if any(k in q for k in (
-        "similar", "reference case", "nearest", "why is this case",
-        "why are these", "retrieved",
-    )):
-        if not ret:
-            return "No reference cases were retrieved for this image."
-        cases = ", ".join(str(int(r["dataset_index"])) for r in ret)
-        sims = ", ".join(f"{float(r['similarity']):.5f}" for r in ret)
-        return f"Nearest visual neighbours are Cases {cases} (cosine similarity: {sims})."
+        if observation:
+            return (
+                f'**Finding location:** The prepared MedGemma observation states: '
+                f'"{observation}"'
+            )
 
-    if any(k in q for k in (
-        "how does", "how were", "pipeline", "explainability",
-        "how is similarity", "how does similarity",
-    )):
+        return "The finding location is not available in the prepared evidence."
+
+    # --------------------------------------------------------
+    # 3. WHY THIS PROTOTYPE?
+    # --------------------------------------------------------
+    if (
+        "why this prototype" in q
+        or "why this prototype?" in q
+        or "prototype" in q and "why" in q
+    ):
+        prototype_id = context.get("prototype_id")
+        affinity = context.get("prototype_similarity")
+
+        if prototype_id is not None and affinity is not None:
+            return (
+                f"**Prototype P{int(prototype_id):02d}** was selected because "
+                f"the image has a visual prototype affinity of **{float(affinity):.3f}**. "
+                f"This indicates that its visual embedding is closely associated "
+                f"with this learned prototype."
+            )
+
+        return "Prototype information is not available for this case."
+
+    # --------------------------------------------------------
+    # 4. WHAT ARE THE SIMILAR CASES?
+    # --------------------------------------------------------
+    if (
+        "similar cases" in q
+        or "similar case" in q
+        or "nearest cases" in q
+        or "similar images" in q
+    ):
+        results = context.get("retrieval_results", [])
+
+        if results:
+            lines = ["**Most similar reference cases:**"]
+
+            for r in results[:3]:
+                case_id = r.get("dataset_index", "Unknown")
+                prototype = r.get("prototype_id")
+
+                similarity = r.get("similarity")
+
+                if similarity is not None:
+                    lines.append(
+                        f"- Case {case_id} · P{int(prototype):02d} · "
+                        f"similarity **{float(similarity):.3f}**"
+                    )
+                else:
+                    lines.append(
+                        f"- Case {case_id} · P{int(prototype):02d}"
+                    )
+
+            return "\n".join(lines)
+
+        return "No similar reference cases are available."
+
+    # --------------------------------------------------------
+    # 5. HOW STRONG IS THE VISUAL MATCH?
+    # --------------------------------------------------------
+    if (
+        "how strong" in q
+        or "visual match" in q
+        or "similarity" in q
+        or "match strength" in q
+    ):
+        affinity = context.get("prototype_similarity")
+        results = context.get("retrieval_results", [])
+
+        response = []
+
+        if affinity is not None:
+            response.append(
+                f"The image has a prototype affinity of **{float(affinity):.3f}**."
+            )
+
+        if results:
+            similarities = [
+                r.get("similarity")
+                for r in results[:3]
+                if r.get("similarity") is not None
+            ]
+
+            if similarities:
+                formatted = ", ".join(
+                    f"{float(s):.3f}" for s in similarities
+                )
+                response.append(
+                    f"The three nearest reference cases have similarities of "
+                    f"**{formatted}**."
+                )
+
+        if response:
+            return " ".join(response)
+
+        return "Visual-match strength is not available for this case."
+
+    # --------------------------------------------------------
+    # 6. DIAGNOSIS
+    # --------------------------------------------------------
+    if (
+        "diagnosis" in q
+        or "diagnose" in q
+        or "clinical" in q
+    ):
         return (
-            "Each image has a 1152-D visual embedding; cosine similarity ranks the "
-            "reference database; the image is assigned a learned visual prototype. "
-            "Retrieval is a separate layer from MedGemma's observation."
+            "No. This demo provides a model-generated observation and visual "
+            "evidence, not a clinical diagnosis."
         )
 
-    if any(k in q for k in ("what evidence", "what is available", "what can you")):
-        return (
-            f"Available: prototype {pid_txt}, {len(ret)} retrieved neighbours, "
-            f"{len(context.get('qa') or {})} precomputed VQA entries, and one "
-            "MedGemma observation."
-        )
-
-    return "That information is not available in the current evidence."
+    # --------------------------------------------------------
+    # FALLBACK
+    # --------------------------------------------------------
+    return (
+        "I can answer questions about the model observation, finding location, "
+        "prototype assignment, visual similarity, and retrieved reference cases."
+    )
 
 
 # ============================================================
