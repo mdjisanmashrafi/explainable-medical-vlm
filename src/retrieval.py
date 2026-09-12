@@ -127,7 +127,6 @@ def find_similar_embeddings(
     # --------------------------------------------------------
 
     if query_embedding.shape[-1] != embeddings.shape[1]:
-
         raise ValueError(
             "Embedding dimension mismatch: "
             f"query={query_embedding.shape[-1]}, "
@@ -135,7 +134,7 @@ def find_similar_embeddings(
         )
 
     # --------------------------------------------------------
-    # Similarity
+    # Compute cosine similarity
     # --------------------------------------------------------
 
     scores = cosine_similarity(
@@ -144,31 +143,42 @@ def find_similar_embeddings(
     )
 
     # --------------------------------------------------------
-    # Top K
+    # Sort all candidates
     # --------------------------------------------------------
 
-    top_rows = np.argsort(
-        scores
-    )[::-1][:top_k]
+    sorted_rows = np.argsort(scores)[::-1]
 
     results = []
 
-    for rank, row_index in enumerate(
-        top_rows,
-        start=1,
-    ):
+    seen_dataset_indices = set()
+
+    # --------------------------------------------------------
+    # Select distinct cases
+    # --------------------------------------------------------
+
+    for row_index in sorted_rows:
+
+        dataset_index = int(
+            valid_indices[row_index]
+        )
+
+        # Prevent duplicate cases
+        if dataset_index in seen_dataset_indices:
+            continue
+
+        seen_dataset_indices.add(
+            dataset_index
+        )
 
         results.append(
             {
-                "rank": rank,
+                "rank": len(results) + 1,
 
                 "embedding_row": int(
                     row_index
                 ),
 
-                "dataset_index": int(
-                    valid_indices[row_index]
-                ),
+                "dataset_index": dataset_index,
 
                 "prototype_id": int(
                     cluster_labels[row_index]
@@ -179,5 +189,8 @@ def find_similar_embeddings(
                 ),
             }
         )
+
+        if len(results) >= top_k:
+            break
 
     return results
