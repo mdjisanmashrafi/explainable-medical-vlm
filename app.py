@@ -3,7 +3,7 @@ from pathlib import Path
 # This creates a deployment-ready app.py from the Streamlit source in the user's
 # message, excluding the local file-generation wrapper that caused the
 # FileNotFoundError in Streamlit Cloud.
-source = r'''import hashlib
+import hashlib
 import os
 import tempfile
 from pathlib import Path
@@ -1340,5 +1340,4 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-'''
 
