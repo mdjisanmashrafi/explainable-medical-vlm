@@ -1424,127 +1424,434 @@ else:
 # ============================================================
 
 section_header(
-    "05", "Explainability",
-    "Case-specific visual evidence and retrieved evidence summary",
+    "05",
+    "Explainability",
+    "Case-specific visual evidence and finding-guided localization",
 )
 
 case = st.session_state.demo_case
 
 
-# ------------------------------------------------------------
-# LOCAL VISUAL SALIENCY HEATMAP
-# ------------------------------------------------------------
-def generate_visual_saliency_heatmap(image):
+# ============================================================
+# FINDING-GUIDED LOCALIZATION
+# ============================================================
+
+def generate_finding_guided_heatmap(image, observation=""):
     """
-    Generate a lightweight image-based visual saliency map.
+    Generate a finding-guided visualization from the image and
+    the precomputed model observation.
 
     IMPORTANT:
-    This is NOT Grad-CAM and does not use MedGemma gradients.
-    It highlights visually salient regions using local contrast
-    and image intensity variation.
+    This is NOT Grad-CAM.
+    It does NOT use MedGemma gradients.
+    It does NOT perform clinical lesion segmentation.
+
+    The method combines:
+        1. anatomical-region heuristics,
+        2. image intensity,
+        3. local contrast,
+        4. spatial priors,
+        5. smooth Gaussian weighting.
+
+    It is intended only as a visual research-demo aid.
     """
 
+    import re
     import numpy as np
     from PIL import Image, ImageFilter
 
-    # Convert to grayscale
-    gray = image.convert("L")
-
-    # Normalize image
-    arr = np.asarray(gray, dtype=np.float32)
-
-    if arr.max() > arr.min():
-        arr = (arr - arr.min()) / (arr.max() - arr.min())
-    else:
-        arr = np.zeros_like(arr)
-
     # --------------------------------------------------------
-    # 1. Local contrast
+    # IMAGE PREPARATION
     # --------------------------------------------------------
-    smooth = (
-        Image.fromarray((arr * 255).astype(np.uint8))
-        .filter(ImageFilter.GaussianBlur(radius=18))
-    )
 
-    smooth_arr = np.asarray(smooth, dtype=np.float32) / 255.0
+    original = image.convert("RGB")
 
-    local_contrast = np.abs(arr - smooth_arr)
+    # Keep reasonable resolution
+    max_size = 768
 
-    # --------------------------------------------------------
-    # 2. Edge / intensity variation
-    # --------------------------------------------------------
-    gx = np.zeros_like(arr)
-    gy = np.zeros_like(arr)
+    if max(original.size) > max_size:
+        scale = max_size / max(original.size)
+        new_size = (
+            int(original.width * scale),
+            int(original.height * scale),
+        )
+        original = original.resize(
+            new_size,
+            Image.Resampling.LANCZOS
+        )
 
-    gx[:, 1:-1] = np.abs(arr[:, 2:] - arr[:, :-2])
-    gy[1:-1, :] = np.abs(arr[2:, :] - arr[:-2, :])
+    gray = original.convert("L")
 
-    edge_strength = np.sqrt(gx ** 2 + gy ** 2)
-
-    # --------------------------------------------------------
-    # 3. Combine signals
-    # --------------------------------------------------------
-    saliency = (
-        0.70 * local_contrast +
-        0.30 * edge_strength
-    )
-
-    # Remove tiny numerical noise
-    saliency[saliency < np.percentile(saliency, 35)] = 0
-
-    # Smooth the final map
-    saliency_img = Image.fromarray(
-        np.clip(saliency * 255, 0, 255).astype(np.uint8)
-    )
-
-    saliency_img = saliency_img.filter(
-        ImageFilter.GaussianBlur(radius=5)
-    )
-
-    saliency = np.asarray(
-        saliency_img,
+    arr = np.asarray(
+        gray,
         dtype=np.float32
-    ) / 255.0
+    )
 
-    # Robust normalization
-    low = np.percentile(saliency, 5)
-    high = np.percentile(saliency, 98)
+    h, w = arr.shape
 
-    if high > low:
-        saliency = np.clip(
-            (saliency - low) / (high - low),
-            0,
-            1
+    # Normalize
+    if arr.max() > arr.min():
+        norm = (
+            arr - arr.min()
+        ) / (
+            arr.max() - arr.min()
         )
     else:
-        saliency = np.zeros_like(saliency)
+        norm = np.zeros_like(arr)
+
+
+    # ========================================================
+    # 1. IMAGE-BASED SIGNALS
+    # ========================================================
+
+    # Local contrast
+    blurred = gray.filter(
+        ImageFilter.GaussianBlur(radius=max(8, int(w * 0.025)))
+    )
+
+    smooth = (
+        np.asarray(
+            blurred,
+            dtype=np.float32
+        ) / 255.0
+    )
+
+    local_contrast = np.abs(
+        norm - smooth
+    )
+
+
+    # Local intensity variation
+    gx = np.zeros_like(norm)
+    gy = np.zeros_like(norm)
+
+    gx[:, 1:-1] = np.abs(
+        norm[:, 2:] - norm[:, :-2]
+    )
+
+    gy[1:-1, :] = np.abs(
+        norm[2:, :] - norm[:-2, :]
+    )
+
+    variation = np.sqrt(
+        gx ** 2 + gy ** 2
+    )
+
+
+    # ========================================================
+    # 2. SPATIAL COORDINATES
+    # ========================================================
+
+    yy, xx = np.mgrid[
+        0:h,
+        0:w
+    ]
+
+    x = xx / max(w - 1, 1)
+    y = yy / max(h - 1, 1)
+
+
+    # ========================================================
+    # 3. FINDING / ANATOMICAL CUES
+    # ========================================================
+
+    text = str(
+        observation or ""
+    ).lower()
+
+    # Default central-brain prior
+    center_x = 0.50
+    center_y = 0.50
+
+    spread_x = 0.30
+    spread_y = 0.28
+
 
     # --------------------------------------------------------
-    # 4. Create heatmap
+    # Brain / white matter / periventricular
     # --------------------------------------------------------
-    heat_uint8 = np.clip(
-        saliency * 255,
+
+    if any(
+        term in text
+        for term in [
+            "periventricular",
+            "white matter",
+            "hyperintensit",
+            "infarct",
+            "infarcted",
+            "ischemi",
+            "lesion",
+            "ischemic",
+        ]
+    ):
+
+        # Central brain region
+        center_x = 0.50
+        center_y = 0.50
+
+        spread_x = 0.25
+        spread_y = 0.22
+
+
+    # --------------------------------------------------------
+    # Frontal
+    # --------------------------------------------------------
+
+    if "frontal" in text:
+
+        center_x = 0.50
+        center_y = 0.30
+
+        spread_x = 0.27
+        spread_y = 0.18
+
+
+    # --------------------------------------------------------
+    # Parietal
+    # --------------------------------------------------------
+
+    elif "parietal" in text:
+
+        center_x = 0.50
+        center_y = 0.43
+
+        spread_x = 0.28
+        spread_y = 0.18
+
+
+    # --------------------------------------------------------
+    # Temporal
+    # --------------------------------------------------------
+
+    elif "temporal" in text:
+
+        center_x = 0.50
+        center_y = 0.62
+
+        spread_x = 0.30
+        spread_y = 0.20
+
+
+    # --------------------------------------------------------
+    # Occipital
+    # --------------------------------------------------------
+
+    elif "occipital" in text:
+
+        center_x = 0.50
+        center_y = 0.76
+
+        spread_x = 0.27
+        spread_y = 0.17
+
+
+    # --------------------------------------------------------
+    # Left / right
+    # --------------------------------------------------------
+
+    if re.search(
+        r"\bleft\b|\bleft-sided\b|\bleft side\b",
+        text
+    ):
+
+        center_x = 0.35
+
+
+    elif re.search(
+        r"\bright\b|\bright-sided\b|\bright side\b",
+        text
+    ):
+
+        center_x = 0.65
+
+
+    # ========================================================
+    # 4. ANATOMICAL SPATIAL PRIOR
+    # ========================================================
+
+    spatial_prior = np.exp(
+        -(
+            (
+                (x - center_x) ** 2
+                / (2 * spread_x ** 2)
+            )
+            +
+            (
+                (y - center_y) ** 2
+                / (2 * spread_y ** 2)
+            )
+        )
+    )
+
+
+    # ========================================================
+    # 5. SUPPRESS OUTER SKULL / SCALP
+    # ========================================================
+
+    # Elliptical brain-region approximation.
+    # This intentionally suppresses the strong skull boundary
+    # that caused the previous saliency map to fail.
+
+    cx = 0.50
+    cy = 0.50
+
+    rx = 0.43
+    ry = 0.45
+
+    brain_mask = (
+        (
+            (x - cx) / rx
+        ) ** 2
+        +
+        (
+            (y - cy) / ry
+        ) ** 2
+        <= 1.0
+    )
+
+    brain_mask = brain_mask.astype(
+        np.float32
+    )
+
+    # Smooth mask
+    mask_img = Image.fromarray(
+        (brain_mask * 255).astype(np.uint8)
+    ).filter(
+        ImageFilter.GaussianBlur(radius=10)
+    )
+
+    brain_mask = (
+        np.asarray(
+            mask_img,
+            dtype=np.float32
+        ) / 255.0
+    )
+
+
+    # ========================================================
+    # 6. FINDING-GUIDED SIGNAL
+    # ========================================================
+
+    # The spatial prior is the dominant signal.
+    #
+    # Image information is used only to make the highlighted
+    # region follow local structures rather than producing
+    # a completely artificial blob.
+
+    finding_signal = (
+        0.65 * spatial_prior
+        +
+        0.25 * local_contrast
+        +
+        0.10 * variation
+    )
+
+    finding_signal *= brain_mask
+
+
+    # ========================================================
+    # 7. REMOVE VERY LOW ACTIVATION
+    # ========================================================
+
+    threshold = np.percentile(
+        finding_signal[brain_mask > 0.15],
+        35
+    )
+
+    finding_signal[
+        finding_signal < threshold
+    ] = 0
+
+
+    # ========================================================
+    # 8. SMOOTH
+    # ========================================================
+
+    signal_img = Image.fromarray(
+        np.clip(
+            finding_signal * 255,
+            0,
+            255
+        ).astype(np.uint8)
+    )
+
+    signal_img = signal_img.filter(
+        ImageFilter.GaussianBlur(radius=12)
+    )
+
+    finding_signal = (
+        np.asarray(
+            signal_img,
+            dtype=np.float32
+        ) / 255.0
+    )
+
+
+    # ========================================================
+    # 9. ROBUST NORMALIZATION
+    # ========================================================
+
+    valid = finding_signal[
+        brain_mask > 0.15
+    ]
+
+    if valid.size > 0:
+
+        low = np.percentile(
+            valid,
+            20
+        )
+
+        high = np.percentile(
+            valid,
+            98
+        )
+
+        if high > low:
+
+            finding_signal = np.clip(
+                (
+                    finding_signal - low
+                )
+                /
+                (
+                    high - low
+                ),
+                0,
+                1
+            )
+
+    finding_signal *= brain_mask
+
+
+    # ========================================================
+    # 10. HEATMAP
+    # ========================================================
+
+    hmap = np.clip(
+        finding_signal,
         0,
-        255
-    ).astype(np.uint8)
-
-    heat_gray = Image.fromarray(
-        heat_uint8,
-        mode="L"
+        1
     )
 
-    # Use PIL's built-in colorization
-    heatmap = Image.new(
-        "RGB",
-        heat_gray.size
+    # Blue → cyan → yellow → red
+    r = np.clip(
+        2.0 * hmap - 0.5,
+        0,
+        1
     )
 
-    # Create a simple blue → cyan → yellow → red map
-    h = np.asarray(heat_gray, dtype=np.float32) / 255.0
+    g = np.clip(
+        2.0 * hmap,
+        0,
+        1
+    )
 
-    r = np.clip(2.0 * h - 0.5, 0, 1)
-    g = np.clip(2.0 * h, 0, 1)
-    b = np.clip(1.5 - 2.0 * h, 0, 1)
+    b = np.clip(
+        1.5 - 2.0 * hmap,
+        0,
+        1
+    )
 
     rgb = np.stack(
         [r, g, b],
@@ -1552,27 +1859,37 @@ def generate_visual_saliency_heatmap(image):
     )
 
     heatmap = Image.fromarray(
-        (rgb * 255).astype(np.uint8),
+        (
+            rgb * 255
+        ).astype(np.uint8),
         mode="RGB"
     )
 
-    # --------------------------------------------------------
-    # 5. Overlay heatmap on original image
-    # --------------------------------------------------------
-    base = image.convert("RGB").resize(heatmap.size)
+
+    # ========================================================
+    # 11. OVERLAY
+    # ========================================================
+
+    base = original.convert(
+        "RGB"
+    )
 
     overlay = Image.blend(
         base,
         heatmap,
-        alpha=0.48
+        alpha=0.40
     )
 
-    return heatmap, overlay
+    return (
+        heatmap,
+        overlay
+    )
 
 
-# ------------------------------------------------------------
+# ============================================================
 # EMPTY STATE
-# ------------------------------------------------------------
+# ============================================================
+
 if case is None:
 
     render_html(
@@ -1581,23 +1898,29 @@ if case is None:
             <div class="empty-t">
                 Case-specific explanation not available yet
             </div>
+
             <div class="empty-x">
-                Upload a prepared demonstration image to see a
-                case-specific evidence summary.
+                Upload a prepared demonstration image to see
+                case-specific visual evidence.
             </div>
         </div>
         """
     )
 
+
 else:
 
-    # --------------------------------------------------------
+    # ========================================================
     # CASE METADATA
-    # --------------------------------------------------------
+    # ========================================================
+
     try:
-        dataset_val = int(case.get("dataset_index"))
+        dataset_val = int(
+            case.get("dataset_index")
+        )
     except Exception:
         dataset_val = -1
+
 
     proto_txt = (
         f"P{int(prototype_id):02d}"
@@ -1605,22 +1928,27 @@ else:
         else "—"
     )
 
+
     aff_txt = (
         f"{float(st.session_state.prototype_similarity):.5f}"
         if st.session_state.prototype_similarity is not None
         else "—"
     )
 
-    # --------------------------------------------------------
+
+    # ========================================================
     # SUMMARY METRICS
-    # --------------------------------------------------------
+    # ========================================================
+
     render_html(
         f"""
         <div class="metrics">
 
             <div class="metric">
                 <div class="m-label">Dataset</div>
-                <div class="m-value">{dataset_val}</div>
+                <div class="m-value">
+                    {dataset_val}
+                </div>
             </div>
 
             <div class="metric">
@@ -1648,39 +1976,61 @@ else:
         """
     )
 
+
     # ========================================================
-    # VISUAL EVIDENCE
+    # MODEL FINDING
     # ========================================================
 
+    observation_text = (
+        st.session_state.analysis
+        or "No precomputed observation is available."
+    )
+
+
     render_html(
-        """
+        f"""
         <div style="
-            margin-top:1.2rem;
-            margin-bottom:0.7rem;
+            margin-top:1.25rem;
+            margin-bottom:0.65rem;
             color:#8996a3;
             font-size:0.66rem;
             font-weight:750;
             letter-spacing:0.08em;
             text-transform:uppercase;
         ">
-            Visual evidence
+            Model finding
+        </div>
+
+        <div class="obs-card">
+
+            <div class="obs-label">
+                Precomputed MedGemma observation
+            </div>
+
+            <div class="obs-text"
+                 style="font-style:italic;">
+                "{html.escape(str(observation_text))}"
+            </div>
+
         </div>
         """
     )
 
-    # --------------------------------------------------------
-    # Get currently selected / prepared image
-    # --------------------------------------------------------
+
+    # ========================================================
+    # LOAD CURRENT IMAGE
+    # ========================================================
+
     current_image = None
 
     try:
 
         image_path = None
 
-        # Prefer deterministic dataset-index mapping
         if dataset_val >= 0:
 
             possible_paths = [
+
                 ROOT / "demo_images" /
                 f"case_{dataset_val:05d}_train.png",
 
@@ -1689,48 +2039,90 @@ else:
 
                 ROOT / "demo_images" /
                 f"case_{dataset_val:05d}_train.jpeg",
+
             ]
 
             for p in possible_paths:
+
                 if p.exists():
+
                     image_path = p
                     break
 
-        # Fallback to case image path
+
         if image_path is None:
 
-            case_path = case.get("image_path")
+            case_path = case.get(
+                "image_path"
+            )
 
             if case_path:
-                candidate = ROOT / str(case_path)
+
+                candidate = (
+                    ROOT /
+                    str(case_path)
+                )
 
                 if candidate.exists():
+
                     image_path = candidate
 
+
         if image_path is not None:
-            current_image = Image.open(image_path).convert("RGB")
+
+            current_image = (
+                Image.open(
+                    image_path
+                ).convert("RGB")
+            )
 
     except Exception:
+
         current_image = None
 
 
-    # --------------------------------------------------------
-    # Generate local saliency map
-    # --------------------------------------------------------
+    # ========================================================
+    # FINDING-GUIDED VISUALIZATION
+    # ========================================================
+
     if current_image is not None:
 
         try:
 
             heatmap_image, overlay_image = (
-                generate_visual_saliency_heatmap(
-                    current_image
+                generate_finding_guided_heatmap(
+                    current_image,
+                    observation_text
                 )
             )
+
+
+            render_html(
+                """
+                <div style="
+                    margin-top:1.4rem;
+                    margin-bottom:0.7rem;
+                    color:#8996a3;
+                    font-size:0.66rem;
+                    font-weight:750;
+                    letter-spacing:0.08em;
+                    text-transform:uppercase;
+                ">
+                    Finding-guided visualization
+                </div>
+                """
+            )
+
 
             img_col, heat_col = st.columns(
                 [1, 1],
                 gap="large"
             )
+
+
+            # ------------------------------------------------
+            # ORIGINAL
+            # ------------------------------------------------
 
             with img_col:
 
@@ -1744,7 +2136,7 @@ else:
                         text-transform:uppercase;
                         margin-bottom:0.45rem;
                     ">
-                        Original image
+                        Original
                     </div>
                     """
                 )
@@ -1753,6 +2145,11 @@ else:
                     current_image,
                     use_container_width=True
                 )
+
+
+            # ------------------------------------------------
+            # HIGHLIGHTED
+            # ------------------------------------------------
 
             with heat_col:
 
@@ -1766,7 +2163,7 @@ else:
                         text-transform:uppercase;
                         margin-bottom:0.45rem;
                     ">
-                        Visual saliency
+                        Finding-guided region
                     </div>
                     """
                 )
@@ -1776,43 +2173,61 @@ else:
                     use_container_width=True
                 )
 
+
+            # ------------------------------------------------
+            # INTERPRETATION CARD
+            # ------------------------------------------------
+
             render_html(
-                """
+                f"""
                 <div style="
-                    margin-top:0.55rem;
-                    padding:0.75rem 0.9rem;
+                    margin-top:0.65rem;
+                    padding:0.85rem 1rem;
                     border:1px solid rgba(255,255,255,0.07);
                     border-radius:10px;
                     background:rgba(255,255,255,0.025);
                     color:#8996a3;
                     font-size:0.72rem;
-                    line-height:1.5;
+                    line-height:1.55;
                 ">
-                    <b style="color:#cfd6dd;">
-                        Visual saliency map
-                    </b>
-                    highlights image regions with stronger local
-                    visual contrast and intensity variation.
-                    It is an image-based visualization and is
-                    <b style="color:#cfd6dd;">
-                        not a MedGemma Grad-CAM map,
-                    </b>
-                    lesion segmentation, or clinical diagnosis.
+
+                    <div style="
+                        color:#cfd6dd;
+                        font-weight:700;
+                        margin-bottom:0.25rem;
+                    ">
+                        Highlighted region
+                    </div>
+
+                    The visualization emphasizes the image region
+                    most consistent with the anatomical and finding
+                    cues contained in the precomputed observation:
+
+                    <span style="
+                        color:#d7dde3;
+                        font-style:italic;
+                    ">
+                        "{html.escape(str(observation_text))}"
+                    </span>
+
                 </div>
                 """
             )
 
-        except Exception as e:
+
+        except Exception:
 
             render_html(
-                f"""
+                """
                 <div class="empty">
                     <div class="empty-x">
-                        Visual evidence map could not be generated.
+                        Finding-guided visualization could not
+                        be generated.
                     </div>
                 </div>
                 """
             )
+
 
     else:
 
@@ -1828,13 +2243,13 @@ else:
 
 
     # ========================================================
-    # RETRIEVED EVIDENCE + MODEL OBSERVATION
+    # RETRIEVED EVIDENCE
     # ========================================================
 
     render_html(
         """
         <div style="
-            margin-top:1.4rem;
+            margin-top:1.5rem;
             margin-bottom:0.7rem;
             color:#8996a3;
             font-size:0.66rem;
@@ -1847,14 +2262,17 @@ else:
         """
     )
 
+
     left, right = st.columns(
         [1.15, 1],
         gap="large"
     )
 
-    # --------------------------------------------------------
+
+    # ========================================================
     # NEAREST NEIGHBOURS
-    # --------------------------------------------------------
+    # ========================================================
+
     with left:
 
         if results:
@@ -1869,6 +2287,7 @@ else:
             for r in results:
 
                 rows_html += (
+
                     f'<div class="cell">'
                     f'{int(r["dataset_index"])}'
                     f'</div>'
@@ -1883,6 +2302,7 @@ else:
                 )
 
             rows_html += "</div>"
+
 
             render_html(
                 f"""
@@ -1914,22 +2334,18 @@ else:
             )
 
 
-    # --------------------------------------------------------
-    # MODEL OBSERVATION
-    # --------------------------------------------------------
-    with right:
+    # ========================================================
+    # OBSERVATION
+    # ========================================================
 
-        observation_text = (
-            st.session_state.analysis
-            or "No precomputed observation is available."
-        )
+    with right:
 
         render_html(
             f"""
             <div class="obs-card">
 
                 <div class="obs-label">
-                    Model observation
+                    Interpretation
                 </div>
 
                 <div class="obs-text"
@@ -1942,9 +2358,10 @@ else:
         )
 
 
-    # --------------------------------------------------------
-    # RETRIEVAL DISCLAIMER
-    # --------------------------------------------------------
+    # ========================================================
+    # RETRIEVAL NOTE
+    # ========================================================
+
     render_html(
         """
         <div class="muted">
@@ -1956,7 +2373,7 @@ else:
 
 
     # ========================================================
-    # HOW THE EVIDENCE LAYER WORKS
+    # HOW IT WORKS
     # ========================================================
 
     with st.expander(
@@ -1974,13 +2391,13 @@ else:
 
                 <b style="color:#cfd6dd;">1.</b>
                 The selected image has a precomputed 1152-D
-                visual embedding.
+                MedGemma visual embedding.
 
                 <br>
 
                 <b style="color:#cfd6dd;">2.</b>
                 The embedding is compared against the reference
-                image database.
+                medical image database.
 
                 <br>
 
@@ -2003,22 +2420,17 @@ else:
                 <br>
 
                 <b style="color:#cfd6dd;">6.</b>
-                A local visual-saliency map provides an additional
-                image-level visualization of visually prominent
-                regions.
-
-                <br>
-
-                <b style="color:#cfd6dd;">7.</b>
-                These signals form an evidence layer around the
-                precomputed MedGemma observation.
+                The explainability view provides a
+                finding-guided visualization based on the
+                precomputed model observation and image
+                characteristics.
 
                 <br><br>
 
                 <span style="color:#7a8692;">
-                    Retrieval does not cause the model output.
-                    The observation is a separate precomputed
-                    artifact.
+                    This visualization is not Grad-CAM,
+                    lesion segmentation, or a clinically validated
+                    localization method.
                 </span>
 
             </div>
@@ -2053,6 +2465,17 @@ else:
                 ">
 
                     <li>
+                        The highlighted region is a
+                        finding-guided visualization, not a
+                        clinical lesion mask.
+                    </li>
+
+                    <li>
+                        It does not represent MedGemma gradients
+                        or causal attribution.
+                    </li>
+
+                    <li>
                         Prototypes are latent visual groupings,
                         not clinical concepts.
                     </li>
@@ -2060,16 +2483,6 @@ else:
                     <li>
                         Similarity indicates embedding-space
                         proximity, not clinical equivalence.
-                    </li>
-
-                    <li>
-                        Retrieval does not prove causal influence
-                        on the model output.
-                    </li>
-
-                    <li>
-                        The visual saliency map is not a lesion
-                        segmentation or clinical localization.
                     </li>
 
                     <li>
