@@ -1219,6 +1219,9 @@ else:
                 st.markdown(message["content"])
     else:
         st.caption("Ask a question about this case.")
+    
+    user_prompt = st.chat_input("Ask a question about this image...")
+
 
 
     if user_prompt:
