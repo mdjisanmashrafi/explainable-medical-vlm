@@ -1425,12 +1425,156 @@ else:
 
 section_header(
     "05", "Explainability",
-    "Case-specific summary of retrieved visual evidence",
+    "Case-specific visual evidence and retrieved evidence summary",
 )
 
 case = st.session_state.demo_case
 
+
+# ------------------------------------------------------------
+# LOCAL VISUAL SALIENCY HEATMAP
+# ------------------------------------------------------------
+def generate_visual_saliency_heatmap(image):
+    """
+    Generate a lightweight image-based visual saliency map.
+
+    IMPORTANT:
+    This is NOT Grad-CAM and does not use MedGemma gradients.
+    It highlights visually salient regions using local contrast
+    and image intensity variation.
+    """
+
+    import numpy as np
+    from PIL import Image, ImageFilter
+
+    # Convert to grayscale
+    gray = image.convert("L")
+
+    # Normalize image
+    arr = np.asarray(gray, dtype=np.float32)
+
+    if arr.max() > arr.min():
+        arr = (arr - arr.min()) / (arr.max() - arr.min())
+    else:
+        arr = np.zeros_like(arr)
+
+    # --------------------------------------------------------
+    # 1. Local contrast
+    # --------------------------------------------------------
+    smooth = (
+        Image.fromarray((arr * 255).astype(np.uint8))
+        .filter(ImageFilter.GaussianBlur(radius=18))
+    )
+
+    smooth_arr = np.asarray(smooth, dtype=np.float32) / 255.0
+
+    local_contrast = np.abs(arr - smooth_arr)
+
+    # --------------------------------------------------------
+    # 2. Edge / intensity variation
+    # --------------------------------------------------------
+    gx = np.zeros_like(arr)
+    gy = np.zeros_like(arr)
+
+    gx[:, 1:-1] = np.abs(arr[:, 2:] - arr[:, :-2])
+    gy[1:-1, :] = np.abs(arr[2:, :] - arr[:-2, :])
+
+    edge_strength = np.sqrt(gx ** 2 + gy ** 2)
+
+    # --------------------------------------------------------
+    # 3. Combine signals
+    # --------------------------------------------------------
+    saliency = (
+        0.70 * local_contrast +
+        0.30 * edge_strength
+    )
+
+    # Remove tiny numerical noise
+    saliency[saliency < np.percentile(saliency, 35)] = 0
+
+    # Smooth the final map
+    saliency_img = Image.fromarray(
+        np.clip(saliency * 255, 0, 255).astype(np.uint8)
+    )
+
+    saliency_img = saliency_img.filter(
+        ImageFilter.GaussianBlur(radius=5)
+    )
+
+    saliency = np.asarray(
+        saliency_img,
+        dtype=np.float32
+    ) / 255.0
+
+    # Robust normalization
+    low = np.percentile(saliency, 5)
+    high = np.percentile(saliency, 98)
+
+    if high > low:
+        saliency = np.clip(
+            (saliency - low) / (high - low),
+            0,
+            1
+        )
+    else:
+        saliency = np.zeros_like(saliency)
+
+    # --------------------------------------------------------
+    # 4. Create heatmap
+    # --------------------------------------------------------
+    heat_uint8 = np.clip(
+        saliency * 255,
+        0,
+        255
+    ).astype(np.uint8)
+
+    heat_gray = Image.fromarray(
+        heat_uint8,
+        mode="L"
+    )
+
+    # Use PIL's built-in colorization
+    heatmap = Image.new(
+        "RGB",
+        heat_gray.size
+    )
+
+    # Create a simple blue → cyan → yellow → red map
+    h = np.asarray(heat_gray, dtype=np.float32) / 255.0
+
+    r = np.clip(2.0 * h - 0.5, 0, 1)
+    g = np.clip(2.0 * h, 0, 1)
+    b = np.clip(1.5 - 2.0 * h, 0, 1)
+
+    rgb = np.stack(
+        [r, g, b],
+        axis=-1
+    )
+
+    heatmap = Image.fromarray(
+        (rgb * 255).astype(np.uint8),
+        mode="RGB"
+    )
+
+    # --------------------------------------------------------
+    # 5. Overlay heatmap on original image
+    # --------------------------------------------------------
+    base = image.convert("RGB").resize(heatmap.size)
+
+    overlay = Image.blend(
+        base,
+        heatmap,
+        alpha=0.48
+    )
+
+    return heatmap, overlay
+
+
+# ------------------------------------------------------------
+# EMPTY STATE
+# ------------------------------------------------------------
 if case is None:
+
     render_html(
         """
         <div class="empty">
@@ -1444,7 +1588,12 @@ if case is None:
         </div>
         """
     )
+
 else:
+
+    # --------------------------------------------------------
+    # CASE METADATA
+    # --------------------------------------------------------
     try:
         dataset_val = int(case.get("dataset_index"))
     except Exception:
@@ -1452,75 +1601,308 @@ else:
 
     proto_txt = (
         f"P{int(prototype_id):02d}"
-        if prototype_id is not None else "—"
+        if prototype_id is not None
+        else "—"
     )
+
     aff_txt = (
         f"{float(st.session_state.prototype_similarity):.5f}"
         if st.session_state.prototype_similarity is not None
         else "—"
     )
 
+    # --------------------------------------------------------
+    # SUMMARY METRICS
+    # --------------------------------------------------------
     render_html(
         f"""
         <div class="metrics">
+
             <div class="metric">
                 <div class="m-label">Dataset</div>
                 <div class="m-value">{dataset_val}</div>
             </div>
+
             <div class="metric">
                 <div class="m-label">Prototype</div>
-                <div class="m-value">{html.escape(proto_txt)}</div>
+                <div class="m-value">
+                    {html.escape(proto_txt)}
+                </div>
             </div>
+
             <div class="metric">
                 <div class="m-label">Affinity</div>
-                <div class="m-value">{html.escape(aff_txt)}</div>
+                <div class="m-value">
+                    {html.escape(aff_txt)}
+                </div>
             </div>
+
             <div class="metric">
                 <div class="m-label">Neighbours</div>
-                <div class="m-value">{len(results)}</div>
+                <div class="m-value">
+                    {len(results)}
+                </div>
             </div>
+
         </div>
         """
     )
 
-    left, right = st.columns([1.15, 1], gap="large")
+    # ========================================================
+    # VISUAL EVIDENCE
+    # ========================================================
 
+    render_html(
+        """
+        <div style="
+            margin-top:1.2rem;
+            margin-bottom:0.7rem;
+            color:#8996a3;
+            font-size:0.66rem;
+            font-weight:750;
+            letter-spacing:0.08em;
+            text-transform:uppercase;
+        ">
+            Visual evidence
+        </div>
+        """
+    )
+
+    # --------------------------------------------------------
+    # Get currently selected / prepared image
+    # --------------------------------------------------------
+    current_image = None
+
+    try:
+
+        image_path = None
+
+        # Prefer deterministic dataset-index mapping
+        if dataset_val >= 0:
+
+            possible_paths = [
+                ROOT / "demo_images" /
+                f"case_{dataset_val:05d}_train.png",
+
+                ROOT / "demo_images" /
+                f"case_{dataset_val:05d}_train.jpg",
+
+                ROOT / "demo_images" /
+                f"case_{dataset_val:05d}_train.jpeg",
+            ]
+
+            for p in possible_paths:
+                if p.exists():
+                    image_path = p
+                    break
+
+        # Fallback to case image path
+        if image_path is None:
+
+            case_path = case.get("image_path")
+
+            if case_path:
+                candidate = ROOT / str(case_path)
+
+                if candidate.exists():
+                    image_path = candidate
+
+        if image_path is not None:
+            current_image = Image.open(image_path).convert("RGB")
+
+    except Exception:
+        current_image = None
+
+
+    # --------------------------------------------------------
+    # Generate local saliency map
+    # --------------------------------------------------------
+    if current_image is not None:
+
+        try:
+
+            heatmap_image, overlay_image = (
+                generate_visual_saliency_heatmap(
+                    current_image
+                )
+            )
+
+            img_col, heat_col = st.columns(
+                [1, 1],
+                gap="large"
+            )
+
+            with img_col:
+
+                render_html(
+                    """
+                    <div style="
+                        color:#8996a3;
+                        font-size:0.66rem;
+                        font-weight:750;
+                        letter-spacing:0.08em;
+                        text-transform:uppercase;
+                        margin-bottom:0.45rem;
+                    ">
+                        Original image
+                    </div>
+                    """
+                )
+
+                st.image(
+                    current_image,
+                    use_container_width=True
+                )
+
+            with heat_col:
+
+                render_html(
+                    """
+                    <div style="
+                        color:#8996a3;
+                        font-size:0.66rem;
+                        font-weight:750;
+                        letter-spacing:0.08em;
+                        text-transform:uppercase;
+                        margin-bottom:0.45rem;
+                    ">
+                        Visual saliency
+                    </div>
+                    """
+                )
+
+                st.image(
+                    overlay_image,
+                    use_container_width=True
+                )
+
+            render_html(
+                """
+                <div style="
+                    margin-top:0.55rem;
+                    padding:0.75rem 0.9rem;
+                    border:1px solid rgba(255,255,255,0.07);
+                    border-radius:10px;
+                    background:rgba(255,255,255,0.025);
+                    color:#8996a3;
+                    font-size:0.72rem;
+                    line-height:1.5;
+                ">
+                    <b style="color:#cfd6dd;">
+                        Visual saliency map
+                    </b>
+                    highlights image regions with stronger local
+                    visual contrast and intensity variation.
+                    It is an image-based visualization and is
+                    <b style="color:#cfd6dd;">
+                        not a MedGemma Grad-CAM map,
+                    </b>
+                    lesion segmentation, or clinical diagnosis.
+                </div>
+                """
+            )
+
+        except Exception as e:
+
+            render_html(
+                f"""
+                <div class="empty">
+                    <div class="empty-x">
+                        Visual evidence map could not be generated.
+                    </div>
+                </div>
+                """
+            )
+
+    else:
+
+        render_html(
+            """
+            <div class="empty">
+                <div class="empty-x">
+                    Original image unavailable for visual evidence.
+                </div>
+            </div>
+            """
+        )
+
+
+    # ========================================================
+    # RETRIEVED EVIDENCE + MODEL OBSERVATION
+    # ========================================================
+
+    render_html(
+        """
+        <div style="
+            margin-top:1.4rem;
+            margin-bottom:0.7rem;
+            color:#8996a3;
+            font-size:0.66rem;
+            font-weight:750;
+            letter-spacing:0.08em;
+            text-transform:uppercase;
+        ">
+            Retrieved evidence
+        </div>
+        """
+    )
+
+    left, right = st.columns(
+        [1.15, 1],
+        gap="large"
+    )
+
+    # --------------------------------------------------------
+    # NEAREST NEIGHBOURS
+    # --------------------------------------------------------
     with left:
+
         if results:
+
             rows_html = (
                 '<div class="neighbors">'
                 '<div class="hdr">Case</div>'
                 '<div class="hdr">Prototype</div>'
                 '<div class="hdr">Similarity</div>'
             )
+
             for r in results:
+
                 rows_html += (
                     f'<div class="cell">'
                     f'{int(r["dataset_index"])}'
                     f'</div>'
+
                     f'<div class="cell muted">'
                     f'P{int(r["prototype_id"]):02d}'
                     f'</div>'
+
                     f'<div class="cell">'
                     f'{float(r["similarity"]):.5f}'
                     f'</div>'
                 )
+
             rows_html += "</div>"
 
             render_html(
                 f"""
-                <div style="margin-bottom:0.3rem;
-                            color:#8996a3;
-                            font-size:0.66rem;
-                            font-weight:750;
-                            letter-spacing:0.08em;
-                            text-transform:uppercase;">
+                <div style="
+                    margin-bottom:0.3rem;
+                    color:#8996a3;
+                    font-size:0.66rem;
+                    font-weight:750;
+                    letter-spacing:0.08em;
+                    text-transform:uppercase;
+                ">
                     Nearest visual neighbours
                 </div>
+
                 {rows_html}
                 """
             )
+
         else:
+
             render_html(
                 """
                 <div class="empty">
@@ -1531,86 +1913,175 @@ else:
                 """
             )
 
+
+    # --------------------------------------------------------
+    # MODEL OBSERVATION
+    # --------------------------------------------------------
     with right:
+
         observation_text = (
             st.session_state.analysis
             or "No precomputed observation is available."
         )
+
         render_html(
             f"""
             <div class="obs-card">
-                <div class="obs-label">Model observation</div>
-                <div class="obs-text" style="font-style:italic;">
+
+                <div class="obs-label">
+                    Model observation
+                </div>
+
+                <div class="obs-text"
+                     style="font-style:italic;">
                     "{html.escape(str(observation_text))}"
                 </div>
+
             </div>
             """
         )
 
+
+    # --------------------------------------------------------
+    # RETRIEVAL DISCLAIMER
+    # --------------------------------------------------------
     render_html(
         """
         <div class="muted">
-            Similarity reflects visual embedding proximity, not
-            clinical equivalence.
+            Similarity reflects visual embedding proximity,
+            not clinical equivalence.
         </div>
         """
     )
 
-    with st.expander("▸ How the evidence layer works", expanded=False):
+
+    # ========================================================
+    # HOW THE EVIDENCE LAYER WORKS
+    # ========================================================
+
+    with st.expander(
+        "▸ How the evidence layer works",
+        expanded=False
+    ):
+
         render_html(
             """
-            <div style="color:#a3aeb9; font-size:0.78rem; line-height:1.55;">
+            <div style="
+                color:#a3aeb9;
+                font-size:0.78rem;
+                line-height:1.55;
+            ">
+
                 <b style="color:#cfd6dd;">1.</b>
-                The selected image has a precomputed 1152-D visual
-                embedding.
+                The selected image has a precomputed 1152-D
+                visual embedding.
+
                 <br>
+
                 <b style="color:#cfd6dd;">2.</b>
-                The embedding is compared against the reference image
-                database.
+                The embedding is compared against the reference
+                image database.
+
                 <br>
+
                 <b style="color:#cfd6dd;">3.</b>
-                Nearest visual neighbours are retrieved by cosine
-                similarity.
+                Nearest visual neighbours are retrieved using
+                cosine similarity.
+
                 <br>
+
                 <b style="color:#cfd6dd;">4.</b>
-                The image is assigned to a learned visual prototype.
+                The image is assigned to a learned visual
+                prototype.
+
                 <br>
+
                 <b style="color:#cfd6dd;">5.</b>
-                Prototype representatives provide additional visual
-                context.
+                Prototype representatives provide additional
+                visual context.
+
                 <br>
+
                 <b style="color:#cfd6dd;">6.</b>
+                A local visual-saliency map provides an additional
+                image-level visualization of visually prominent
+                regions.
+
+                <br>
+
+                <b style="color:#cfd6dd;">7.</b>
                 These signals form an evidence layer around the
                 precomputed MedGemma observation.
+
                 <br><br>
+
                 <span style="color:#7a8692;">
-                    Retrieval does not cause the model output. The
-                    observation is a separate precomputed artifact.
+                    Retrieval does not cause the model output.
+                    The observation is a separate precomputed
+                    artifact.
                 </span>
+
             </div>
             """
         )
 
-    with st.expander("▸ Interpretation boundary", expanded=False):
+
+    # ========================================================
+    # INTERPRETATION BOUNDARY
+    # ========================================================
+
+    with st.expander(
+        "▸ Interpretation boundary",
+        expanded=False
+    ):
+
         render_html(
             """
-            <div style="color:#a3aeb9; font-size:0.78rem; line-height:1.55;">
-                <b style="color:#cfc4a3;">Boundaries:</b>
-                <ul style="margin-top:0.3rem; padding-left:1.1rem;">
-                    <li>Prototypes are latent visual groupings, not
-                        clinical concepts.</li>
-                    <li>Similarity indicates embedding-space
-                        proximity, not clinical equivalence.</li>
-                    <li>Retrieval does not prove causal influence on
-                        the model output.</li>
-                    <li>MedGemma observations are model-generated and
-                        are not clinical diagnoses.</li>
+            <div style="
+                color:#a3aeb9;
+                font-size:0.78rem;
+                line-height:1.55;
+            ">
+
+                <b style="color:#cfc4a3;">
+                    Boundaries:
+                </b>
+
+                <ul style="
+                    margin-top:0.3rem;
+                    padding-left:1.1rem;
+                ">
+
+                    <li>
+                        Prototypes are latent visual groupings,
+                        not clinical concepts.
+                    </li>
+
+                    <li>
+                        Similarity indicates embedding-space
+                        proximity, not clinical equivalence.
+                    </li>
+
+                    <li>
+                        Retrieval does not prove causal influence
+                        on the model output.
+                    </li>
+
+                    <li>
+                        The visual saliency map is not a lesion
+                        segmentation or clinical localization.
+                    </li>
+
+                    <li>
+                        MedGemma observations are model-generated
+                        and are not clinical diagnoses.
+                    </li>
+
                 </ul>
+
             </div>
             """
         )
-
-
 # ============================================================
 # 06 — ASK ABOUT THIS IMAGE
 # ============================================================
