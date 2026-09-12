@@ -28,6 +28,8 @@ DEMO_CASES_PATH = ROOT / "demo_cases.csv"
 DEMO_IMAGES_DIR = ROOT / "demo_images"
 PROTOTYPE_IMAGES_DIR = ROOT / "representative_images"
 
+IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp")
+
 MAX_SIMILAR_CASES = 3
 MAX_PROTOTYPE_IMAGES = 3
 MAX_CHAT_TURNS = 3
@@ -237,6 +239,10 @@ st.markdown(
         border-radius: 16px;
         border: 1px solid rgba(255,255,255,0.075);
         background: rgba(255,255,255,0.025);
+    }
+
+    [data-testid="stImage"] img {
+        border-radius: 12px;
     }
 
     /* ======================================================
@@ -463,6 +469,39 @@ st.markdown(
     }
 
     /* ======================================================
+       DEBUG TABLE
+       ====================================================== */
+
+    .debug-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+        gap: 0.55rem;
+    }
+
+    .debug-item {
+        padding: 0.65rem 0.75rem;
+        border-radius: 10px;
+        border: 1px solid rgba(255,255,255,0.06);
+        background: rgba(255,255,255,0.02);
+    }
+
+    .debug-key {
+        color: #778492;
+        font-size: 0.62rem;
+        font-weight: 750;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+    }
+
+    .debug-val {
+        margin-top: 0.2rem;
+        color: #dfe6ec;
+        font-size: 0.8rem;
+        font-weight: 650;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    /* ======================================================
        INPUTS
        ====================================================== */
 
@@ -508,21 +547,21 @@ DEFAULT_STATE = {
     "image_hash": None,
     "analysis": None,
     "embedding": None,
+    "embedding_row": None,
     "retrieval_results": [],
     "prototype_id": None,
     "prototype_similarity": None,
     "demo_case": None,
     "chat_history": [],
     "error": None,
+    "debug": {},
+    "similar_image_hashes": [],
+    "prototype_images": [],
 }
 
 for key, value in DEFAULT_STATE.items():
     if key not in st.session_state:
-        st.session_state[key] = (
-            value.copy()
-            if isinstance(value, list)
-            else value
-        )
+        st.session_state[key] = value.copy() if isinstance(value, list) else value
 
 
 # ============================================================
@@ -541,23 +580,9 @@ def get_demo_cases():
 
     df = pd.read_csv(DEMO_CASES_PATH)
 
-    if "dataset_index" in df.columns:
-        df["dataset_index"] = pd.to_numeric(
-            df["dataset_index"],
-            errors="coerce",
-        )
-
-    if "embedding_row" in df.columns:
-        df["embedding_row"] = pd.to_numeric(
-            df["embedding_row"],
-            errors="coerce",
-        )
-
-    if "prototype_id" in df.columns:
-        df["prototype_id"] = pd.to_numeric(
-            df["prototype_id"],
-            errors="coerce",
-        )
+    for column in ("dataset_index", "embedding_row", "prototype_id"):
+        if column in df.columns:
+            df[column] = pd.to_numeric(df[column], errors="coerce")
 
     return df
 
@@ -565,9 +590,7 @@ def get_demo_cases():
 try:
     artifacts = get_artifacts()
 except Exception as exc:
-    st.error(
-        f"Unable to load retrieval artifacts: {exc}"
-    )
+    st.error(f"Retrieval artifacts unavailable: {exc}")
     st.stop()
 
 demo_df = get_demo_cases()
@@ -577,61 +600,51 @@ demo_df = get_demo_cases()
 # UTILITY FUNCTIONS
 # ============================================================
 
-def calculate_hash(data):
+def calculate_hash(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def normalize_question(text):
-    if text is None:
-        return ""
+@st.cache_data(show_spinner=False)
+def file_sha256(path_str: str):
+    """SHA-256 of file content, or None if unreadable."""
+    try:
+        return hashlib.sha256(Path(path_str).read_bytes()).hexdigest()
+    except Exception:
+        return None
 
-    text = str(text).strip().lower()
 
-    for character in [
-        "?",
-        ".",
-        ",",
-        "!",
-        ":",
-        ";",
-    ]:
-        text = text.replace(
-            character,
-            "",
-        )
-
-    return " ".join(text.split())
+def validate_image_file(path):
+    """Return True if `path` exists and PIL can open it."""
+    try:
+        if path is None:
+            return False
+        p = Path(path)
+        if not p.exists() or not p.is_file():
+            return False
+        with Image.open(p) as img:
+            img.verify()
+        return True
+    except Exception:
+        return False
 
 
 def parse_qa(value):
     if value is None:
         return {}
-
     if isinstance(value, dict):
         return value
-
     try:
         parsed = json.loads(str(value))
-
         if isinstance(parsed, dict):
             return parsed
-
     except Exception:
         pass
-
     return {}
 
 
-def cosine_similarity(a, b):
-    a = np.asarray(
-        a,
-        dtype=np.float32,
-    ).reshape(-1)
-
-    b = np.asarray(
-        b,
-        dtype=np.float32,
-    ).reshape(-1)
+def cosine_similarity(a, b) -> float:
+    a = np.asarray(a, dtype=np.float32).reshape(-1)
+    b = np.asarray(b, dtype=np.float32).reshape(-1)
 
     if a.shape != b.shape:
         return 0.0
@@ -642,131 +655,103 @@ def cosine_similarity(a, b):
     if a_norm == 0 or b_norm == 0:
         return 0.0
 
-    return float(
-        np.dot(a, b)
-        / (a_norm * b_norm)
-    )
+    return float(np.dot(a, b) / (a_norm * b_norm))
 
 
 # ============================================================
-# ACTUAL DEMO IMAGE RESOLUTION
+# DEMO IMAGE RESOLUTION  (authoritative: dataset_index)
 # ============================================================
 
-def resolve_demo_image(row):
-    """
-    Resolve the actual demonstration image belonging
-    to a dataset index.
-
-    Priority:
-        1. deterministic dataset-index filename
-        2. image_filename
-        3. image_path
-
-    IMPORTANT:
-        This function NEVER falls back to prototype
-        representative images.
-    """
-
+def _row_get(row, key):
+    """Safe getter that works for dict, pd.Series, or None."""
     if row is None:
         return None
+    try:
+        if isinstance(row, pd.Series):
+            if key not in row.index:
+                return None
+            return row[key]
+        return row.get(key)
+    except Exception:
+        return None
+
+
+def resolve_demo_image(dataset_index, row=None):
+    """
+    Resolve the actual demonstration image belonging to a dataset index.
+
+    Priority
+    --------
+    1. demo_images/case_{dataset_index:05d}_train.<ext>
+    2. demo_images/<image_filename>
+    3. <ROOT>/<image_path>   (from CSV)
+
+    This function NEVER returns a prototype representative image.
+    Returns a resolved `Path` or `None`.
+    """
 
     # --------------------------------------------------------
-    # 1. Deterministic mapping from dataset_index
+    # Priority 1 — deterministic dataset-index mapping
     # --------------------------------------------------------
 
-    dataset_index = row.get("dataset_index")
-
-    if (
-        dataset_index is not None
-        and not pd.isna(dataset_index)
-    ):
+    if dataset_index is not None:
 
         try:
 
-            dataset_index = int(
-                dataset_index
-            )
+            idx = int(dataset_index)
 
-            extensions = [
-                ".png",
-                ".jpg",
-                ".jpeg",
-                ".webp",
-            ]
-
-            for extension in extensions:
+            for ext in IMAGE_EXTENSIONS:
 
                 candidate = (
                     DEMO_IMAGES_DIR
-                    / f"case_{dataset_index:05d}_train{extension}"
+                    / f"case_{idx:05d}_train{ext}"
                 )
 
                 if candidate.exists():
-                    return candidate
+                    return candidate.resolve()
 
         except Exception:
             pass
 
     # --------------------------------------------------------
-    # 2. Explicit filename
+    # Priority 2 — explicit filename
     # --------------------------------------------------------
 
-    filename = row.get(
-        "image_filename"
-    )
+    filename = _row_get(row, "image_filename")
 
-    if (
-        filename is not None
-        and not pd.isna(filename)
-    ):
+    if filename is not None and not pd.isna(filename):
 
-        candidate = (
-            DEMO_IMAGES_DIR
-            / str(filename)
-        )
+        candidate = DEMO_IMAGES_DIR / str(filename)
 
         if candidate.exists():
-            return candidate
+            return candidate.resolve()
 
     # --------------------------------------------------------
-    # 3. CSV image_path fallback
+    # Priority 3 — CSV image_path
     # --------------------------------------------------------
 
-    image_path = row.get(
-        "image_path"
-    )
+    image_path = _row_get(row, "image_path")
 
-    if (
-        image_path is not None
-        and not pd.isna(image_path)
-    ):
+    if image_path is not None and not pd.isna(image_path):
 
-        candidate = (
-            ROOT / str(image_path)
-        )
+        candidate = ROOT / str(image_path)
 
         if candidate.exists():
 
-            # Safety check:
-            # Never resolve a prototype image here.
-
+            # Safety: never surface a prototype image here.
             try:
-
                 candidate.resolve().relative_to(
                     PROTOTYPE_IMAGES_DIR.resolve()
                 )
-
                 return None
-
             except ValueError:
-
-                return candidate
+                return candidate.resolve()
 
     return None
 
 
 # ============================================================
-# FIND DEMO CASE
+# DEMO CASE LOOKUP
 # ============================================================
 
 def find_demo_case_by_hash(file_hash):
@@ -778,8 +763,7 @@ def find_demo_case_by_hash(file_hash):
         return None
 
     matches = demo_df[
-        demo_df["image_hash"].astype(str)
-        == str(file_hash)
+        demo_df["image_hash"].astype(str) == str(file_hash)
     ]
 
     if matches.empty:
@@ -796,10 +780,12 @@ def find_case_metadata(dataset_index):
     if "dataset_index" not in demo_df.columns:
         return None
 
-    matches = demo_df[
-        demo_df["dataset_index"]
-        == int(dataset_index)
-    ]
+    try:
+        idx = int(dataset_index)
+    except Exception:
+        return None
+
+    matches = demo_df[demo_df["dataset_index"] == idx]
 
     if matches.empty:
         return None
@@ -811,30 +797,21 @@ def find_case_metadata(dataset_index):
 # PROTOTYPE AFFINITY
 # ============================================================
 
-def calculate_prototype_affinity(
-    embedding,
-    prototype_id,
-):
+def calculate_prototype_affinity(embedding, prototype_id):
 
-    centroids = artifacts.get(
-        "cluster_centroids"
-    )
+    centroids = artifacts.get("cluster_centroids")
 
     if centroids is None:
         return None
 
-    centroids = np.asarray(
-        centroids
-    )
+    centroids = np.asarray(centroids)
 
-    prototype_id = int(
-        prototype_id
-    )
+    try:
+        prototype_id = int(prototype_id)
+    except Exception:
+        return None
 
-    if (
-        prototype_id < 0
-        or prototype_id >= len(centroids)
-    ):
+    if prototype_id < 0 or prototype_id >= len(centroids):
         return None
 
     centroid = np.asarray(
@@ -851,48 +828,24 @@ def calculate_prototype_affinity(
     # Original embedding space
     # --------------------------------------------------------
 
-    if (
-        centroid.shape[0]
-        == embedding.shape[0]
-    ):
-
-        return cosine_similarity(
-            embedding,
-            centroid,
-        )
+    if centroid.shape[0] == embedding.shape[0]:
+        return cosine_similarity(embedding, centroid)
 
     # --------------------------------------------------------
     # PCA space
     # --------------------------------------------------------
 
-    pca = artifacts.get(
-        "pca_model"
-    )
-
-    scaler = artifacts.get(
-        "pca_scaler"
-    )
+    pca = artifacts.get("pca_model")
+    scaler = artifacts.get("pca_scaler")
 
     if pca is None or scaler is None:
         return None
 
     try:
-
-        scaled = scaler.transform(
-            embedding.reshape(1, -1)
-        )
-
-        transformed = pca.transform(
-            scaled
-        )[0]
-
-        return cosine_similarity(
-            transformed,
-            centroid,
-        )
-
+        scaled = scaler.transform(embedding.reshape(1, -1))
+        transformed = pca.transform(scaled)[0]
+        return cosine_similarity(transformed, centroid)
     except Exception:
-
         return None
 
 
@@ -900,26 +853,18 @@ def calculate_prototype_affinity(
 # PROTOTYPE DESCRIPTION
 # ============================================================
 
-def get_prototype_description(
-    prototype_id,
-):
+def get_prototype_description(prototype_id):
 
-    summary = artifacts.get(
-        "prototype_summary"
-    )
+    summary = artifacts.get("prototype_summary")
 
-    if (
-        summary is None
-        or summary.empty
-    ):
+    if summary is None or summary.empty:
         return "Learned visual prototype."
 
     if "prototype_id" not in summary.columns:
         return "Learned visual prototype."
 
     matches = summary[
-        summary["prototype_id"].astype(str)
-        == str(prototype_id)
+        summary["prototype_id"].astype(str) == str(prototype_id)
     ]
 
     if matches.empty:
@@ -927,52 +872,43 @@ def get_prototype_description(
 
     row = matches.iloc[0]
 
-    for column in [
+    for column in (
         "description",
         "prototype_description",
         "summary",
         "interpretation",
-    ]:
-
+    ):
         if column not in row.index:
             continue
-
         value = row[column]
-
-        if (
-            pd.notna(value)
-            and str(value).strip()
-        ):
+        if pd.notna(value) and str(value).strip():
             return str(value)
 
     return "Learned visual prototype."
 
 
 # ============================================================
-# PROTOTYPE REPRESENTATIVE IMAGES
+# PROTOTYPE REPRESENTATIVE IMAGES  (with dedup)
 # ============================================================
 
-def get_prototype_images(
-    prototype_id,
-):
+def get_unique_prototype_images(prototype_id, exclude_hashes=None):
     """
-    Resolve prototype representative images.
+    Resolve prototype representative images, deduplicated by
+    resolved path AND by SHA-256 file content.
 
-    These images are ONLY used in Section 04.
+    `exclude_hashes` — a set of SHA-256 hashes that were already
+    shown elsewhere (e.g. in Similar Cases).  Representatives
+    whose content matches an excluded hash are pushed to the end
+    so genuinely unique representatives appear first.  They are
+    not removed, since they still legitimately belong to the
+    prototype.
 
-    Deduplication occurs using:
-        - resolved path
-        - actual file-content SHA256
-
-    Therefore the same image cannot appear three times
-    simply because the CSV contains duplicate entries.
+    Returns a list of resolved `Path` objects.
     """
 
     candidates = []
 
-    prototype_df = artifacts.get(
-        "prototype_images"
-    )
+    prototype_df = artifacts.get("prototype_images")
 
     # --------------------------------------------------------
     # CSV lookup
@@ -981,23 +917,23 @@ def get_prototype_images(
     if (
         prototype_df is not None
         and not prototype_df.empty
-        and "prototype_id"
-        in prototype_df.columns
+        and "prototype_id" in prototype_df.columns
     ):
 
         matches = prototype_df[
-            prototype_df["prototype_id"].astype(str)
-            == str(prototype_id)
+            prototype_df["prototype_id"].astype(str) == str(prototype_id)
         ]
 
         for _, row in matches.iterrows():
 
-            for column in [
+            found = False
+
+            for column in (
                 "image_path",
                 "representative_image",
                 "image",
                 "filename",
-            ]:
+            ):
 
                 if column not in row.index:
                     continue
@@ -1012,21 +948,13 @@ def get_prototype_images(
                 if not value:
                     continue
 
-                possible_paths = [
+                for candidate in (
                     ROOT / value,
                     PROTOTYPE_IMAGES_DIR / value,
-                ]
-
-                found = False
-
-                for candidate in possible_paths:
+                ):
 
                     if candidate.exists():
-
-                        candidates.append(
-                            candidate
-                        )
-
+                        candidates.append(candidate)
                         found = True
                         break
 
@@ -1039,76 +967,68 @@ def get_prototype_images(
 
     if not candidates:
 
-        folder = (
-            PROTOTYPE_IMAGES_DIR
-            / f"P{int(prototype_id):02d}"
-        )
+        try:
+            folder = (
+                PROTOTYPE_IMAGES_DIR
+                / f"P{int(prototype_id):02d}"
+            )
+        except Exception:
+            folder = None
 
-        if folder.exists():
+        if folder is not None and folder.exists():
 
             candidates = sorted(
-                [
-                    path
-                    for path in folder.iterdir()
-                    if path.is_file()
-                    and path.suffix.lower()
-                    in {
-                        ".png",
-                        ".jpg",
-                        ".jpeg",
-                        ".webp",
-                    }
-                ]
+                p
+                for p in folder.iterdir()
+                if p.is_file()
+                and p.suffix.lower() in IMAGE_EXTENSIONS
             )
 
     # --------------------------------------------------------
-    # Deduplicate using actual image content
+    # Deduplicate by path + content hash
     # --------------------------------------------------------
 
     unique = []
-
     seen_paths = set()
     seen_hashes = set()
 
     for path in candidates:
 
         try:
-
-            path = path.resolve()
-
-            path_key = str(path)
-
-            if path_key in seen_paths:
-                continue
-
-            content_hash = hashlib.sha256(
-                path.read_bytes()
-            ).hexdigest()
-
-            if content_hash in seen_hashes:
-                continue
-
-            seen_paths.add(
-                path_key
-            )
-
-            seen_hashes.add(
-                content_hash
-            )
-
-            unique.append(path)
-
+            resolved = path.resolve()
         except Exception:
-
             continue
 
-        if (
-            len(unique)
-            >= MAX_PROTOTYPE_IMAGES
-        ):
-            break
+        key = str(resolved)
 
-    return unique
+        if key in seen_paths:
+            continue
+
+        content_hash = file_sha256(key)
+
+        if content_hash is None:
+            continue
+
+        if content_hash in seen_hashes:
+            continue
+
+        seen_paths.add(key)
+        seen_hashes.add(content_hash)
+
+        unique.append((resolved, content_hash))
+
+    # --------------------------------------------------------
+    # Cross-section preference
+    # --------------------------------------------------------
+
+    if exclude_hashes:
+
+        preferred = [t for t in unique if t[1] not in exclude_hashes]
+        overlapping = [t for t in unique if t[1] in exclude_hashes]
+
+        unique = preferred + overlapping
+
+    return [path for path, _ in unique[:MAX_PROTOTYPE_IMAGES]]
 
 
 # ============================================================
@@ -1118,31 +1038,38 @@ def get_prototype_images(
 def retrieve_similar_cases(
     query_embedding,
     exclude_dataset_index=None,
+    exclude_hashes=None,
     top_k=MAX_SIMILAR_CASES,
 ):
     """
-    Retrieve actual reference cases from the embedding space.
+    Retrieve the nearest reference cases from the embedding database.
 
-    Protections:
-        - query case excluded
-        - dataset indices deduplicated
-        - image paths deduplicated
-        - actual demo images only
-        - prototype images never used
+    Deduplication
+    -------------
+    - the query case itself is excluded (by dataset index)
+    - the query image content is excluded (by SHA-256)
+    - dataset indices are deduplicated
+    - resolved image paths are deduplicated
+    - image content is deduplicated (SHA-256)
+
+    Ranking order is preserved among unique survivors.
+
+    Returns (results, debug_dict).
     """
+
+    debug = {
+        "db_shape": None,
+        "candidates_scanned": 0,
+        "exact_embedding_duplicates": 0,
+    }
 
     embeddings = np.asarray(
         artifacts["visual_embeddings"],
         dtype=np.float32,
     )
 
-    valid_indices = np.asarray(
-        artifacts["valid_indices"]
-    )
-
-    cluster_labels = np.asarray(
-        artifacts["cluster_labels"]
-    )
+    valid_indices = np.asarray(artifacts["valid_indices"])
+    cluster_labels = np.asarray(artifacts["cluster_labels"])
 
     query_embedding = np.asarray(
         query_embedding,
@@ -1150,142 +1077,124 @@ def retrieve_similar_cases(
     ).reshape(-1)
 
     if embeddings.ndim != 2:
-        return []
+        return [], debug
 
-    if (
-        embeddings.shape[1]
-        != query_embedding.shape[0]
-    ):
-        return []
+    debug["db_shape"] = tuple(embeddings.shape)
 
-    query_norm = np.linalg.norm(
-        query_embedding
-    )
+    if embeddings.shape[1] != query_embedding.shape[0]:
+        return [], debug
+
+    query_norm = np.linalg.norm(query_embedding)
 
     if query_norm == 0:
-        return []
+        return [], debug
 
-    embedding_norms = np.linalg.norm(
-        embeddings,
-        axis=1,
-    )
+    embedding_norms = np.linalg.norm(embeddings, axis=1)
 
-    denominator = (
-        embedding_norms
-        * query_norm
-    )
+    denominator = embedding_norms * query_norm
+    denominator[denominator == 0] = 1e-12
 
-    denominator[
-        denominator == 0
-    ] = 1e-12
+    scores = np.dot(embeddings, query_embedding) / denominator
 
-    scores = (
-        np.dot(
-            embeddings,
-            query_embedding,
-        )
-        / denominator
-    )
-
-    ranked_indices = np.argsort(
-        scores
-    )[::-1]
+    ranked_indices = np.argsort(scores)[::-1]
 
     results = []
 
     seen_dataset_indices = set()
     seen_image_paths = set()
+    seen_image_hashes = set(exclude_hashes or set())
 
     for row_index in ranked_indices:
 
-        dataset_index = int(
-            valid_indices[row_index]
-        )
+        debug["candidates_scanned"] += 1
+
+        dataset_index = int(valid_indices[row_index])
 
         # ----------------------------------------------------
-        # Exclude selected image
+        # Exclude the query case
         # ----------------------------------------------------
 
         if (
-            exclude_dataset_index
-            is not None
-            and dataset_index
-            == int(exclude_dataset_index)
+            exclude_dataset_index is not None
+            and dataset_index == int(exclude_dataset_index)
         ):
             continue
 
         # ----------------------------------------------------
-        # Dataset deduplication
+        # Dataset-level dedup
         # ----------------------------------------------------
 
-        if (
-            dataset_index
-            in seen_dataset_indices
-        ):
+        if dataset_index in seen_dataset_indices:
             continue
 
-        metadata = find_case_metadata(
-            dataset_index
-        )
-
-        if metadata is None:
-            continue
+        metadata = find_case_metadata(dataset_index)
 
         # ----------------------------------------------------
-        # Resolve ACTUAL case image
+        # Resolve the ACTUAL reference image
         # ----------------------------------------------------
 
-        actual_image = resolve_demo_image(
-            metadata
-        )
+        actual_image = resolve_demo_image(dataset_index, metadata)
 
         if actual_image is None:
             continue
 
-        image_key = str(
-            actual_image.resolve()
-        )
+        image_key = str(actual_image)
 
         # ----------------------------------------------------
-        # Image-level deduplication
+        # Path-level dedup
         # ----------------------------------------------------
 
         if image_key in seen_image_paths:
             continue
 
-        seen_dataset_indices.add(
-            dataset_index
-        )
+        # ----------------------------------------------------
+        # Content-level dedup
+        # ----------------------------------------------------
 
-        seen_image_paths.add(
-            image_key
-        )
+        content_hash = file_sha256(image_key)
+
+        if content_hash is None:
+            continue
+
+        if content_hash in seen_image_hashes:
+            continue
+
+        # ----------------------------------------------------
+        # (Optional) track exact embedding duplicates
+        # ----------------------------------------------------
+
+        if np.array_equal(embeddings[row_index], query_embedding):
+            debug["exact_embedding_duplicates"] += 1
+
+        seen_dataset_indices.add(dataset_index)
+        seen_image_paths.add(image_key)
+        seen_image_hashes.add(content_hash)
+
+        try:
+            prototype_id = int(cluster_labels[row_index])
+        except Exception:
+            prototype_id = -1
 
         results.append(
             {
                 "rank": len(results) + 1,
-                "embedding_row": int(
-                    row_index
-                ),
+                "embedding_row": int(row_index),
                 "dataset_index": dataset_index,
-                "prototype_id": int(
-                    cluster_labels[row_index]
-                ),
-                "similarity": float(
-                    scores[row_index]
-                ),
+                "prototype_id": prototype_id,
+                "similarity": float(scores[row_index]),
                 "image_path": actual_image,
                 "image_filename": actual_image.name,
+                "image_hash": content_hash,
             }
         )
 
-        if (
-            len(results)
-            >= top_k
-        ):
+        if len(results) >= top_k:
             break
 
-    return results
+    debug["unique_retrieved"] = len(results)
+    debug["requested"] = top_k
+
+    return results, debug
 
 
 # ============================================================
@@ -1296,114 +1205,146 @@ def reset_analysis():
 
     st.session_state.analysis = None
     st.session_state.embedding = None
+    st.session_state.embedding_row = None
     st.session_state.retrieval_results = []
     st.session_state.prototype_id = None
     st.session_state.prototype_similarity = None
     st.session_state.demo_case = None
     st.session_state.chat_history = []
     st.session_state.error = None
+    st.session_state.debug = {}
+    st.session_state.similar_image_hashes = []
+    st.session_state.prototype_images = []
 
 
 # ============================================================
 # PRECOMPUTED PIPELINE
 # ============================================================
 
-def run_precomputed_case(
-    demo_case,
-):
+def run_precomputed_case(demo_case, query_image_hash=None):
 
     if demo_case is None:
         return False
 
     try:
 
-        dataset_index = int(
-            demo_case["dataset_index"]
+        dataset_index = int(demo_case["dataset_index"])
+        embedding_row = int(demo_case["embedding_row"])
+
+        embeddings = np.asarray(
+            artifacts["visual_embeddings"],
+            dtype=np.float32,
         )
 
-        embedding_row = int(
-            demo_case["embedding_row"]
-        )
+        if embedding_row < 0 or embedding_row >= embeddings.shape[0]:
+            st.session_state.error = (
+                f"Embedding row {embedding_row} is out of range."
+            )
+            return False
 
         embedding = np.asarray(
-            artifacts["visual_embeddings"][
-                embedding_row
-            ],
+            embeddings[embedding_row],
             dtype=np.float32,
         )
 
         # ----------------------------------------------------
-        # MedGemma observation
+        # MedGemma observation (precomputed)
         # ----------------------------------------------------
 
         answer = (
             demo_case.get("answer")
             or demo_case.get("analysis")
             or demo_case.get("initial_analysis")
-            or "No precomputed observation is available."
+            or "No precomputed observation is available for this case."
         )
 
         # ----------------------------------------------------
         # Prototype
         # ----------------------------------------------------
 
-        prototype_id = int(
-            demo_case["prototype_id"]
-        )
+        try:
+            prototype_id = int(demo_case["prototype_id"])
+        except Exception:
+            prototype_id = None
 
         prototype_similarity = (
-            calculate_prototype_affinity(
-                embedding,
-                prototype_id,
-            )
+            calculate_prototype_affinity(embedding, prototype_id)
+            if prototype_id is not None
+            else None
         )
 
         # ----------------------------------------------------
         # Similar reference cases
         # ----------------------------------------------------
 
-        similar_cases = (
-            retrieve_similar_cases(
-                query_embedding=embedding,
-                exclude_dataset_index=dataset_index,
-                top_k=MAX_SIMILAR_CASES,
+        exclude_hashes = set()
+
+        if query_image_hash:
+            exclude_hashes.add(str(query_image_hash))
+
+        similar_cases, debug = retrieve_similar_cases(
+            query_embedding=embedding,
+            exclude_dataset_index=dataset_index,
+            exclude_hashes=exclude_hashes,
+            top_k=MAX_SIMILAR_CASES,
+        )
+
+        similar_hashes = {
+            r["image_hash"]
+            for r in similar_cases
+            if r.get("image_hash")
+        }
+
+        # ----------------------------------------------------
+        # Prototype representative images
+        # ----------------------------------------------------
+
+        prototype_images = (
+            get_unique_prototype_images(
+                prototype_id,
+                exclude_hashes=similar_hashes,
             )
+            if prototype_id is not None
+            else []
         )
 
-        st.session_state.analysis = str(
-            answer
-        )
+        # ----------------------------------------------------
+        # Commit to session state
+        # ----------------------------------------------------
 
-        st.session_state.embedding = (
-            embedding
-        )
+        st.session_state.analysis = str(answer)
+        st.session_state.embedding = embedding
+        st.session_state.embedding_row = embedding_row
+        st.session_state.prototype_id = prototype_id
+        st.session_state.prototype_similarity = prototype_similarity
+        st.session_state.retrieval_results = similar_cases
+        st.session_state.demo_case = demo_case
+        st.session_state.similar_image_hashes = list(similar_hashes)
+        st.session_state.prototype_images = prototype_images
 
-        st.session_state.prototype_id = (
-            prototype_id
-        )
-
-        st.session_state.prototype_similarity = (
-            prototype_similarity
-        )
-
-        st.session_state.retrieval_results = (
-            similar_cases
-        )
-
-        st.session_state.demo_case = (
-            demo_case
-        )
+        st.session_state.debug = {
+            "db_shape": debug.get("db_shape"),
+            "embedding_row": embedding_row,
+            "prototype_id": prototype_id,
+            "top_similarity": (
+                float(similar_cases[0]["similarity"])
+                if similar_cases
+                else None
+            ),
+            "unique_retrieved": debug.get("unique_retrieved", 0),
+            "requested": debug.get("requested", MAX_SIMILAR_CASES),
+            "exact_embedding_duplicates": debug.get(
+                "exact_embedding_duplicates", 0
+            ),
+            "prototype_images_found": len(prototype_images),
+        }
 
         st.session_state.error = None
 
         return True
 
     except Exception as exc:
-
-        st.session_state.error = str(
-            exc
-        )
-
+        st.session_state.error = str(exc)
         return False
 
 
@@ -1458,94 +1399,6 @@ st.markdown(
 
 
 # ============================================================
-# SYSTEM INFORMATION
-# ============================================================
-
-with st.expander(
-    "⚙️ System information",
-    expanded=False,
-):
-
-    c1, c2, c3, c4 = st.columns(4)
-
-    with c1:
-
-        st.markdown(
-            """
-            <div class="status-card">
-
-                <div class="status-label">
-                    Model
-                </div>
-
-                <div class="status-value">
-                    MedGemma 1.5 4B
-                </div>
-
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    with c2:
-
-        st.markdown(
-            """
-            <div class="status-card">
-
-                <div class="status-label">
-                    Embedding
-                </div>
-
-                <div class="status-value">
-                    1152-D
-                </div>
-
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    with c3:
-
-        st.markdown(
-            """
-            <div class="status-card">
-
-                <div class="status-label">
-                    Prototypes
-                </div>
-
-                <div class="status-value">
-                    30 learned clusters
-                </div>
-
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    with c4:
-
-        st.markdown(
-            """
-            <div class="status-card">
-
-                <div class="status-label">
-                    Reference cases
-                </div>
-
-                <div class="status-value">
-                    1,793 images
-                </div>
-
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-
-# ============================================================
 # 01 — MEDICAL IMAGE
 # ============================================================
 
@@ -1577,12 +1430,7 @@ st.markdown(
 
 uploaded_file = st.file_uploader(
     "Upload a medical image",
-    type=[
-        "png",
-        "jpg",
-        "jpeg",
-        "webp",
-    ],
+    type=["png", "jpg", "jpeg", "webp"],
     label_visibility="collapsed",
 )
 
@@ -1592,79 +1440,59 @@ if uploaded_file is not None:
     try:
 
         file_bytes = uploaded_file.getvalue()
-
-        current_hash = calculate_hash(
-            file_bytes
-        )
+        current_hash = calculate_hash(file_bytes)
 
         # ----------------------------------------------------
-        # Process only when image changes
+        # Process only when the uploaded image changes
         # ----------------------------------------------------
 
-        if (
-            st.session_state.image_hash
-            != current_hash
-        ):
+        if st.session_state.image_hash != current_hash:
 
             reset_analysis()
 
-            st.session_state.image_hash = (
-                current_hash
-            )
+            st.session_state.image_hash = current_hash
 
-            demo_case = (
-                find_demo_case_by_hash(
-                    current_hash
-                )
-            )
+            demo_case = find_demo_case_by_hash(current_hash)
 
             if demo_case is not None:
 
-                success = (
-                    run_precomputed_case(
-                        demo_case
-                    )
+                success = run_precomputed_case(
+                    demo_case,
+                    query_image_hash=current_hash,
                 )
 
                 if success:
-
                     st.success(
                         "Prepared demonstration case recognized."
+                    )
+
+                else:
+                    st.error(
+                        "Prepared case recognized, but precomputed "
+                        "artifacts could not be loaded."
                     )
 
             else:
 
                 st.session_state.error = (
-                    "This image is not included "
-                    "in the prepared demonstration library."
+                    "This image is not currently included in the "
+                    "prepared demonstration artifacts. "
+                    "Live MedGemma inference is not enabled in "
+                    "the public demo."
                 )
 
-        image = Image.open(
-            uploaded_file
-        ).convert("RGB")
+        image = Image.open(uploaded_file).convert("RGB")
 
-        left, right = st.columns(
-            [1.05, 0.95],
-            gap="large",
-        )
+        left, right = st.columns([1.05, 0.95], gap="large")
 
         with left:
-
-            st.image(
-                image,
-                use_container_width=True,
-            )
+            st.image(image, use_container_width=True)
 
         with right:
 
-            if (
-                st.session_state.demo_case
-                is not None
-            ):
+            if st.session_state.demo_case is not None:
 
-                case = (
-                    st.session_state.demo_case
-                )
+                case = st.session_state.demo_case
 
                 st.markdown(
                     """
@@ -1688,7 +1516,6 @@ if uploaded_file is not None:
                 a, b = st.columns(2)
 
                 with a:
-
                     st.markdown(
                         f"""
                         <div class="status-card">
@@ -1707,7 +1534,11 @@ if uploaded_file is not None:
                     )
 
                 with b:
-
+                    proto_display = (
+                        f"P{int(case['prototype_id']):02d}"
+                        if pd.notna(case.get("prototype_id"))
+                        else "—"
+                    )
                     st.markdown(
                         f"""
                         <div class="status-card">
@@ -1717,7 +1548,7 @@ if uploaded_file is not None:
                             </div>
 
                             <div class="status-value">
-                                P{int(case["prototype_id"]):02d}
+                                {proto_display}
                             </div>
 
                         </div>
@@ -1726,14 +1557,8 @@ if uploaded_file is not None:
                     )
 
                 st.write("")
-
-                st.caption(
-                    f"📄 {uploaded_file.name}"
-                )
-
-                st.caption(
-                    f"📦 {len(file_bytes) / 1024:.1f} KB"
-                )
+                st.caption(f"📄 {uploaded_file.name}")
+                st.caption(f"📦 {len(file_bytes) / 1024:.1f} KB")
 
             else:
 
@@ -1752,6 +1577,8 @@ if uploaded_file is not None:
                         <div class="empty-text">
                             This public demo currently supports
                             prepared cases with precomputed results.
+                            Live MedGemma inference is not enabled
+                            in the public demo.
                         </div>
 
                     </div>
@@ -1761,9 +1588,164 @@ if uploaded_file is not None:
 
     except Exception as exc:
 
-        st.error(
-            f"Unable to process image: {exc}"
+        st.error(f"Unable to process image: {exc}")
+
+
+# ============================================================
+# SYSTEM INFORMATION  (static + optional debug)
+# ============================================================
+
+with st.expander("⚙️ System information", expanded=False):
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    with c1:
+        st.markdown(
+            """
+            <div class="status-card">
+                <div class="status-label">Model</div>
+                <div class="status-value">MedGemma 1.5 4B</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
+
+    with c2:
+        st.markdown(
+            """
+            <div class="status-card">
+                <div class="status-label">Embedding</div>
+                <div class="status-value">1152-D</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with c3:
+        st.markdown(
+            """
+            <div class="status-card">
+                <div class="status-label">Prototypes</div>
+                <div class="status-value">30 learned clusters</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with c4:
+        st.markdown(
+            """
+            <div class="status-card">
+                <div class="status-label">Reference cases</div>
+                <div class="status-value">1,793 images</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    # --------------------------------------------------------
+    # Debug panel (research / development only)
+    # --------------------------------------------------------
+
+    debug = st.session_state.get("debug") or {}
+
+    db_shape = debug.get("db_shape")
+
+    if db_shape is not None:
+        db_shape_text = f"{db_shape[0]} × {db_shape[1]}"
+    else:
+        db_shape_text = "—"
+
+    top_sim = debug.get("top_similarity")
+
+    top_sim_text = (
+        f"{float(top_sim):.5f}" if top_sim is not None else "—"
+    )
+
+    unique_retrieved = debug.get("unique_retrieved")
+    requested = debug.get("requested")
+
+    unique_text = (
+        f"{unique_retrieved} / {requested}"
+        if unique_retrieved is not None and requested is not None
+        else "—"
+    )
+
+    proto_id_dbg = debug.get("prototype_id")
+
+    proto_id_dbg_text = (
+        f"P{int(proto_id_dbg):02d}" if proto_id_dbg is not None else "—"
+    )
+
+    exact_dupes = debug.get("exact_embedding_duplicates")
+
+    exact_dupes_text = (
+        "Yes" if (exact_dupes or 0) > 0 else ("No" if exact_dupes is not None else "—")
+    )
+
+    emb_row_dbg = debug.get("embedding_row")
+
+    emb_row_text = (
+        str(int(emb_row_dbg)) if emb_row_dbg is not None else "—"
+    )
+
+    proto_imgs_found = debug.get("prototype_images_found")
+
+    proto_imgs_text = (
+        str(proto_imgs_found) if proto_imgs_found is not None else "—"
+    )
+
+    st.markdown("<div style='height:0.8rem;'></div>", unsafe_allow_html=True)
+
+    st.markdown(
+        f"""
+        <div class="debug-grid">
+
+            <div class="debug-item">
+                <div class="debug-key">Embedding database</div>
+                <div class="debug-val">{html.escape(db_shape_text)}</div>
+            </div>
+
+            <div class="debug-item">
+                <div class="debug-key">Selected embedding row</div>
+                <div class="debug-val">{html.escape(emb_row_text)}</div>
+            </div>
+
+            <div class="debug-item">
+                <div class="debug-key">Selected prototype</div>
+                <div class="debug-val">{html.escape(proto_id_dbg_text)}</div>
+            </div>
+
+            <div class="debug-item">
+                <div class="debug-key">Top similarity</div>
+                <div class="debug-val">{html.escape(top_sim_text)}</div>
+            </div>
+
+            <div class="debug-item">
+                <div class="debug-key">Unique images retrieved</div>
+                <div class="debug-val">{html.escape(unique_text)}</div>
+            </div>
+
+            <div class="debug-item">
+                <div class="debug-key">Exact embedding duplicate</div>
+                <div class="debug-val">{html.escape(exact_dupes_text)}</div>
+            </div>
+
+            <div class="debug-item">
+                <div class="debug-key">Prototype representatives</div>
+                <div class="debug-val">{html.escape(proto_imgs_text)}</div>
+            </div>
+
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.caption(
+        "Debug values reflect the currently loaded demonstration case. "
+        "Similarity values are computed exactly and are never adjusted "
+        "for display."
+    )
 
 
 # ============================================================
@@ -1798,11 +1780,7 @@ st.markdown(
 
 if st.session_state.analysis:
 
-    safe_analysis = html.escape(
-        str(
-            st.session_state.analysis
-        )
-    )
+    safe_analysis = html.escape(str(st.session_state.analysis))
 
     st.markdown(
         f"""
@@ -1818,17 +1796,9 @@ if st.session_state.analysis:
 
             <div style="margin-top:0.9rem;">
 
-                <span class="badge">
-                    Precomputed
-                </span>
-
-                <span class="badge">
-                    Image-grounded
-                </span>
-
-                <span class="badge">
-                    VQA result
-                </span>
+                <span class="badge">Precomputed</span>
+                <span class="badge">Image-grounded</span>
+                <span class="badge">VQA result</span>
 
             </div>
 
@@ -1881,8 +1851,8 @@ st.markdown(
             </div>
 
             <div class="section-description">
-                Actual reference images retrieved from the visual
-                embedding space.
+                Nearest actual reference cases retrieved from the
+                visual embedding database.
             </div>
 
         </div>
@@ -1900,18 +1870,14 @@ if results:
 
     st.markdown(
         """
-        <div class="soft-card"
-             style="margin-bottom:1rem;">
+        <div class="soft-card" style="margin-bottom:1rem;">
 
-            <span style="
-                color:#8996a3;
-                font-size:0.73rem;
-                line-height:1.5;
-            ">
+            <span style="color:#8996a3; font-size:0.73rem; line-height:1.5;">
                 Ranked by cosine similarity between the selected
                 image and the reference-image embeddings.
-                The selected case itself is excluded, and each
-                reference image is shown only once.
+                The selected case is excluded, and each reference
+                image is shown only once (deduplicated by dataset
+                index, path, and file content).
             </span>
 
         </div>
@@ -1919,38 +1885,19 @@ if results:
         unsafe_allow_html=True,
     )
 
-    columns = st.columns(
-        len(results),
-        gap="medium",
-    )
+    columns = st.columns(len(results), gap="medium")
 
-    for column, result in zip(
-        columns,
-        results,
-    ):
+    for column, result in zip(columns, results):
 
         with column:
 
-            image_path = result.get(
-                "image_path"
-            )
+            image_path = result.get("image_path")
 
-            if (
-                image_path is not None
-                and Path(
-                    image_path
-                ).exists()
-            ):
-
-                st.image(
-                    str(image_path),
-                    use_container_width=True,
-                )
-
+            if image_path is not None and Path(image_path).exists():
+                st.image(str(image_path), use_container_width=True)
             else:
-
                 st.markdown(
-                    """
+                    f"""
                     <div class="empty-state">
 
                         <div class="empty-icon">
@@ -1958,7 +1905,12 @@ if results:
                         </div>
 
                         <div class="empty-title">
-                            Image unavailable
+                            Reference image unavailable
+                        </div>
+
+                        <div class="empty-text">
+                            Dataset index:
+                            {int(result.get("dataset_index", -1))}
                         </div>
 
                     </div>
@@ -1966,13 +1918,8 @@ if results:
                     unsafe_allow_html=True,
                 )
 
-            similarity = float(
-                result["similarity"]
-            )
-
-            prototype = int(
-                result["prototype_id"]
-            )
+            similarity = float(result["similarity"])
+            prototype = int(result["prototype_id"])
 
             st.markdown(
                 f"""
@@ -1991,8 +1938,7 @@ if results:
                     </div>
 
                     <div class="similarity-pill">
-                        Cosine similarity&nbsp;&nbsp;
-                        {similarity:.5f}
+                        Cosine similarity&nbsp;&nbsp;{similarity:.5f}
                     </div>
 
                 </div>
@@ -2044,8 +1990,8 @@ st.markdown(
             </div>
 
             <div class="section-description">
-                Representative images from the assigned learned
-                visual prototype.
+                Representative images belonging to the assigned
+                learned visual prototype.
             </div>
 
         </div>
@@ -2056,32 +2002,19 @@ st.markdown(
 )
 
 
-prototype_id = (
-    st.session_state.prototype_id
-)
+prototype_id = st.session_state.prototype_id
 
 
 if prototype_id is not None:
 
-    description = (
-        get_prototype_description(
-            prototype_id
-        )
-    )
-
-    score = (
-        st.session_state.prototype_similarity
-    )
+    description = get_prototype_description(prototype_id)
+    score = st.session_state.prototype_similarity
 
     score_text = (
-        f"{float(score):.5f}"
-        if score is not None
-        else "—"
+        f"{float(score):.5f}" if score is not None else "—"
     )
 
-    safe_description = html.escape(
-        str(description)
-    )
+    safe_description = html.escape(str(description))
 
     st.markdown(
         f"""
@@ -2098,8 +2031,7 @@ if prototype_id is not None:
                 <div>
 
                     <div class="prototype-id">
-                        Visual Prototype
-                        P{int(prototype_id):02d}
+                        Visual Prototype P{int(prototype_id):02d}
                     </div>
 
                     <div class="prototype-description">
@@ -2108,10 +2040,7 @@ if prototype_id is not None:
 
                 </div>
 
-                <div style="
-                    text-align:right;
-                    min-width:110px;
-                ">
+                <div style="text-align:right; min-width:110px;">
 
                     <div class="prototype-score-label">
                         Prototype affinity
@@ -2130,36 +2059,20 @@ if prototype_id is not None:
         unsafe_allow_html=True,
     )
 
-    prototype_images = (
-        get_prototype_images(
-            prototype_id
-        )
-    )
+    prototype_images = st.session_state.prototype_images or []
 
     if prototype_images:
 
-        columns = st.columns(
-            len(prototype_images),
-            gap="medium",
-        )
+        columns = st.columns(len(prototype_images), gap="medium")
 
-        for index, (
-            column,
-            image_path,
-        ) in enumerate(
-            zip(
-                columns,
-                prototype_images,
-            ),
+        for index, (column, image_path) in enumerate(
+            zip(columns, prototype_images),
             start=1,
         ):
 
             with column:
 
-                st.image(
-                    str(image_path),
-                    use_container_width=True,
-                )
+                st.image(str(image_path), use_container_width=True)
 
                 st.markdown(
                     f"""
@@ -2250,10 +2163,7 @@ st.markdown(
 )
 
 
-left, right = st.columns(
-    [1.05, 1],
-    gap="large",
-)
+left, right = st.columns([1.05, 1], gap="large")
 
 
 with left:
@@ -2289,9 +2199,7 @@ with right:
 
             <div class="step">
 
-                <span class="step-number">
-                    01
-                </span>
+                <span class="step-number">01</span>
 
                 <span class="step-title">
                     Visual representation
@@ -2306,9 +2214,7 @@ with right:
 
             <div class="step">
 
-                <span class="step-number">
-                    02
-                </span>
+                <span class="step-number">02</span>
 
                 <span class="step-title">
                     Similarity retrieval
@@ -2323,9 +2229,7 @@ with right:
 
             <div class="step">
 
-                <span class="step-number">
-                    03
-                </span>
+                <span class="step-number">03</span>
 
                 <span class="step-title">
                     Prototype context
@@ -2404,68 +2308,43 @@ st.markdown(
 
 if st.session_state.demo_case:
 
-    qa = parse_qa(
-        st.session_state.demo_case.get(
-            "qa"
-        )
-    )
+    qa = parse_qa(st.session_state.demo_case.get("qa"))
 
     if qa:
 
-        question_options = list(
-            qa.keys()
-        )
+        question_options = list(qa.keys())
 
         selected_question = st.selectbox(
             "Precomputed questions",
             options=question_options,
-            format_func=lambda x:
-                str(x).strip().capitalize(),
+            format_func=lambda x: str(x).strip().capitalize(),
         )
 
-        if st.button(
-            "Show answer",
-            type="primary",
-        ):
+        if st.button("Show answer", type="primary"):
 
-            answer = qa.get(
-                selected_question
-            )
+            answer = qa.get(selected_question)
 
             if answer:
 
                 st.session_state.chat_history.append(
                     {
-                        "question": str(
-                            selected_question
-                        ),
-                        "answer": str(
-                            answer
-                        ),
+                        "question": str(selected_question),
+                        "answer": str(answer),
                     }
                 )
 
                 st.session_state.chat_history = (
-                    st.session_state.chat_history[
-                        -MAX_CHAT_TURNS:
-                    ]
+                    st.session_state.chat_history[-MAX_CHAT_TURNS:]
                 )
 
         if st.session_state.chat_history:
 
             st.write("")
 
-            for turn in reversed(
-                st.session_state.chat_history
-            ):
+            for turn in reversed(st.session_state.chat_history):
 
-                safe_question = html.escape(
-                    turn["question"]
-                )
-
-                safe_answer = html.escape(
-                    turn["answer"]
-                )
+                safe_question = html.escape(turn["question"])
+                safe_answer = html.escape(turn["answer"])
 
                 st.markdown(
                     f"""
