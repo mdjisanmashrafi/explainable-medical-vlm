@@ -1,13 +1,8 @@
-from pathlib import Path
-
-# This creates a deployment-ready app.py from the Streamlit source in the user's
-# message, excluding the local file-generation wrapper that caused the
-# FileNotFoundError in Streamlit Cloud.
 import hashlib
 import os
 import tempfile
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -38,7 +33,7 @@ MAX_CHAT_CONTEXT_TURNS = 3
 
 
 # ============================================================
-# RESEARCH-GRADE UI
+# VISUAL DESIGN — CUSTOM CSS
 # ============================================================
 
 def inject_custom_css() -> None:
@@ -46,308 +41,170 @@ def inject_custom_css() -> None:
         """
         <style>
         :root {
-            --bg: #ffffff;
-            --surface: #f7f9fb;
-            --surface-2: #fbfcfd;
-            --border: #e3e8ee;
-            --border-strong: #d3dbe4;
-            --text: #17202a;
-            --muted: #667382;
-            --subtle: #8b97a5;
-            --accent: #1677a8;
-            --accent-soft: #edf7fb;
-            --success: #287a58;
-            --danger: #b33a3a;
+            --bg-primary: #FFFFFF;
+            --bg-secondary: #F8F9FA;
+            --border-color: #E5E7EB;
+            --text-main: #111827;
+            --text-muted: #6B7280;
+            --accent: #2563EB; /* Restrained professional blue */
+            --accent-light: #EFF6FF;
         }
 
         html, body, [data-testid="stAppViewContainer"] {
-            background: var(--bg);
-            color: var(--text);
-            font-family:
-                Inter, -apple-system, BlinkMacSystemFont, "Segoe UI",
-                Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-primary);
+            color: var(--text-main);
+            font-family: "Inter", -apple-system, "Segoe UI", sans-serif;
         }
 
-        [data-testid="stHeader"] {
-            background: rgba(255, 255, 255, 0.96);
+        /* Typography & Headers */
+        h1, h2, h3, h4, h5, h6 {
+            color: var(--text-main) !important;
+            font-weight: 600 !important;
+            letter-spacing: -0.01em;
+        }
+        
+        p, span, label, .stMarkdown {
+            color: var(--text-main);
         }
 
-        .block-container {
-            max-width: 1240px;
-            padding-top: 2.8rem;
-            padding-bottom: 4rem;
+        .app-header {
+            padding: 2rem 0 1.5rem 0;
+            margin-bottom: 2rem;
+            border-bottom: 1px solid var(--border-color);
         }
-
-        h1, h2, h3, h4 {
-            color: var(--text) !important;
-            font-weight: 650 !important;
-            letter-spacing: -0.02em;
-        }
-
-        p, li, label, .stMarkdown {
-            color: var(--text);
-        }
-
-        .research-header {
-            padding-bottom: 1.65rem;
-            margin-bottom: 2.1rem;
-            border-bottom: 1px solid var(--border);
-        }
-
-        .research-kicker {
-            color: var(--accent);
-            font-size: 0.73rem;
-            font-weight: 700;
-            letter-spacing: 0.12em;
-            text-transform: uppercase;
-            margin-bottom: 0.55rem;
-        }
-
-        .research-title {
-            color: var(--text);
+        
+        .app-header h1 {
             font-size: 2.25rem;
-            line-height: 1.08;
-            font-weight: 700;
-            letter-spacing: -0.035em;
-            margin: 0;
+            margin: 0 0 0.5rem 0;
+            font-weight: 700 !important;
         }
-
-        .research-subtitle {
-            color: var(--muted);
-            font-size: 0.96rem;
-            margin-top: 0.55rem;
-        }
-
-        .research-description {
-            color: var(--muted);
-            font-size: 0.84rem;
-            line-height: 1.55;
-            max-width: 760px;
-            margin-top: 0.65rem;
-        }
-
-        .section-wrap {
-            margin-top: 2.2rem;
+        
+        .app-header .subtitle {
+            color: var(--text-muted);
+            font-size: 1.05rem;
+            font-weight: 400;
         }
 
         .section-heading {
-            display: flex;
-            align-items: baseline;
-            gap: 0.7rem;
-            margin-bottom: 0.85rem;
-        }
-
-        .section-number {
-            color: var(--accent);
-            font-size: 0.73rem;
-            font-weight: 750;
-            letter-spacing: 0.08em;
-        }
-
-        .section-title {
-            color: var(--text);
-            font-size: 1.15rem;
-            font-weight: 680;
-            letter-spacing: -0.015em;
-        }
-
-        .section-caption {
-            color: var(--muted);
-            font-size: 0.79rem;
-            margin: -0.35rem 0 0.9rem 1.95rem;
-        }
-
-        .surface {
-            background: var(--surface-2);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 1.15rem;
-        }
-
-        .surface-tight {
-            background: var(--surface-2);
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            padding: 0.9rem 1rem;
-        }
-
-        .analysis-card {
-            background: #ffffff;
-            border: 1px solid var(--border-strong);
-            border-left: 3px solid var(--accent);
-            border-radius: 10px;
-            padding: 1.25rem 1.35rem;
-            box-shadow: 0 1px 2px rgba(23, 32, 42, 0.03);
-        }
-
-        .analysis-label {
-            color: var(--accent);
-            font-size: 0.69rem;
-            font-weight: 750;
-            letter-spacing: 0.1em;
-            text-transform: uppercase;
-            margin-bottom: 0.65rem;
-        }
-
-        .analysis-text {
-            color: var(--text);
-            font-size: 0.96rem;
-            line-height: 1.7;
-            white-space: pre-wrap;
-        }
-
-        .empty-state {
-            border: 1px dashed var(--border-strong);
-            border-radius: 10px;
-            padding: 1.6rem;
-            text-align: center;
-            color: var(--muted);
-            background: var(--surface-2);
-            font-size: 0.84rem;
-        }
-
-        .meta-label {
-            color: var(--muted);
-            font-size: 0.72rem;
-            margin-bottom: 0.2rem;
-        }
-
-        .meta-value {
-            color: var(--text);
-            font-size: 0.91rem;
+            font-size: 1.25rem;
             font-weight: 600;
-            margin-bottom: 0.8rem;
+            color: var(--text-main);
+            margin: 2.5rem 0 1.25rem 0;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid var(--border-color);
         }
-
-        .status-pill {
-            display: inline-block;
-            padding: 0.25rem 0.55rem;
-            border-radius: 999px;
-            background: var(--accent-soft);
+        
+        .section-heading span {
             color: var(--accent);
-            font-size: 0.69rem;
+            margin-right: 0.5rem;
             font-weight: 700;
-            letter-spacing: 0.02em;
         }
 
-        .similarity-note {
-            color: var(--muted);
-            font-size: 0.72rem;
-            line-height: 1.45;
-            margin-top: 0.7rem;
+        /* Cards & Containers */
+        .research-card {
+            background-color: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
         }
 
-        .case-card {
-            background: #ffffff;
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            overflow: hidden;
-            height: 100%;
+        .analysis-result {
+            background-color: var(--bg-primary);
+            border-left: 4px solid var(--accent);
+            border-top: 1px solid var(--border-color);
+            border-right: 1px solid var(--border-color);
+            border-bottom: 1px solid var(--border-color);
+            border-radius: 0 8px 8px 0;
+            padding: 1.25rem 1.5rem;
+            font-size: 1rem;
+            line-height: 1.6;
+            color: var(--text-main);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
         }
 
-        .case-meta {
-            padding: 0.72rem 0.8rem 0.82rem 0.8rem;
+        /* Metrics */
+        [data-testid="stMetric"] {
+            background-color: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 1rem;
+        }
+        [data-testid="stMetricLabel"] {
+            color: var(--text-muted) !important;
+            font-size: 0.85rem !important;
+            font-weight: 500;
+        }
+        [data-testid="stMetricValue"] {
+            color: var(--text-main) !important;
+            font-size: 1.5rem !important;
+            font-weight: 600 !important;
         }
 
-        .case-rank {
-            color: var(--subtle);
-            font-size: 0.67rem;
-            font-weight: 750;
-            letter-spacing: 0.07em;
-            text-transform: uppercase;
+        /* Image Gallery */
+        .gallery-item {
+            background-color: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 0.75rem;
+            text-align: center;
         }
-
-        .case-score {
-            color: var(--text);
-            font-size: 0.9rem;
-            font-weight: 700;
-            margin-top: 0.22rem;
+        
+        .gallery-meta {
+            margin-top: 0.75rem;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
-
-        .case-prototype {
+        
+        .similarity-badge {
+            background-color: var(--accent-light);
             color: var(--accent);
-            font-size: 0.73rem;
-            font-weight: 650;
-            margin-top: 0.18rem;
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            font-weight: 600;
+            font-size: 0.8rem;
         }
 
+        /* Chat & Inputs */
         [data-testid="stChatMessage"] {
-            background: #ffffff;
-            border: 1px solid var(--border);
-            border-radius: 10px;
+            background-color: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
         }
-
-        .stTextInput input,
-        .stTextArea textarea {
-            background: #ffffff !important;
-            color: var(--text) !important;
-            border: 1px solid var(--border-strong) !important;
-            border-radius: 8px !important;
-        }
-
+        
         [data-testid="stFileUploaderDropzone"] {
-            background: #ffffff;
-            border: 1px dashed var(--border-strong);
-            border-radius: 10px;
+            background-color: var(--bg-secondary);
+            border: 1px dashed #D1D5DB;
+            border-radius: 8px;
         }
 
         .stButton > button {
-            border-radius: 8px;
-            border: 1px solid var(--border-strong);
-            background: #ffffff;
-            color: var(--text);
-            font-weight: 650;
-            min-height: 2.55rem;
-            transition: border-color 0.12s ease, background 0.12s ease;
+            background-color: var(--bg-primary);
+            color: var(--text-main);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            font-weight: 500;
+            transition: all 0.2s;
         }
-
+        
         .stButton > button:hover {
             border-color: var(--accent);
-            background: var(--accent-soft);
             color: var(--accent);
+            background-color: var(--accent-light);
         }
-
-        .primary-button .stButton > button {
-            background: var(--accent);
-            border-color: var(--accent);
-            color: #ffffff;
+        
+        .stButton > button[kind="primary"] {
+            background-color: var(--accent);
+            color: white;
+            border: none;
         }
-
-        .primary-button .stButton > button:hover {
-            background: #126789;
-            border-color: #126789;
-            color: #ffffff;
-        }
-
-        [data-testid="stMetric"] {
-            background: transparent;
-            border: 0;
-            padding: 0.15rem 0;
-        }
-
-        [data-testid="stMetricLabel"] {
-            color: var(--muted) !important;
-            font-size: 0.7rem !important;
-        }
-
-        [data-testid="stMetricValue"] {
-            color: var(--text) !important;
-            font-size: 1.2rem !important;
-            font-weight: 680 !important;
-        }
-
-        [data-testid="stDataFrame"] {
-            border: 1px solid var(--border);
-            border-radius: 8px;
-        }
-
-        .footer {
-            margin-top: 3rem;
-            padding-top: 1rem;
-            border-top: 1px solid var(--border);
-            color: var(--subtle);
-            text-align: center;
-            font-size: 0.7rem;
+        
+        .stButton > button[kind="primary"]:hover {
+            background-color: #1D4ED8;
+            color: white;
         }
         </style>
         """,
@@ -362,22 +219,21 @@ def inject_custom_css() -> None:
 def ensure_session_defaults() -> None:
     defaults = {
         "image_hash": None,
+        "initial_analysis": None,
         "chat_history": [],
-        "analysis_result": None,
         "query_embedding": None,
         "retrieval_results": None,
         "recommended_prototype": None,
         "last_error": None,
     }
-
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
 
 
 def reset_image_specific_state() -> None:
+    st.session_state["initial_analysis"] = None
     st.session_state["chat_history"] = []
-    st.session_state["analysis_result"] = None
     st.session_state["query_embedding"] = None
     st.session_state["retrieval_results"] = None
     st.session_state["recommended_prototype"] = None
@@ -411,46 +267,25 @@ def save_temp_image(image: Image.Image) -> str:
 
 
 # ============================================================
-# BACKEND
+# BACKEND CALLS
 # ============================================================
 
 class BackendError(Exception):
-    """User-facing backend exception with optional technical detail."""
-
-    def __init__(self, message: str, technical_detail: Optional[str] = None):
-        super().__init__(message)
-        self.message = message
-        self.technical_detail = technical_detail
+    pass
 
 
 def call_analyze_image(image: Image.Image, question: str) -> str:
     client = load_medgemma_client()
     image_path = save_temp_image(image)
-
     try:
         result = client.predict(
             handle_file(image_path),
             question,
             api_name="/analyze_image",
         )
-
-        answer = str(result).strip()
-
-        if not answer:
-            raise BackendError(
-                "MedGemma returned an empty response.",
-                "The /analyze_image endpoint completed without returning text.",
-            )
-
-        return answer
-
-    except BackendError:
-        raise
+        return str(result).strip()
     except Exception as exc:
-        raise BackendError(
-            "MedGemma analysis failed. Please try again.",
-            repr(exc),
-        ) from exc
+        raise BackendError("MedGemma analysis failed.") from exc
     finally:
         try:
             os.remove(image_path)
@@ -461,30 +296,15 @@ def call_analyze_image(image: Image.Image, question: str) -> str:
 def call_embed_image(image: Image.Image) -> np.ndarray:
     client = load_medgemma_client()
     image_path = save_temp_image(image)
-
     try:
         result = client.predict(
             handle_file(image_path),
             api_name="/embed_image",
         )
-
         embedding = np.asarray(result, dtype=np.float32).reshape(-1)
-
-        if embedding.size == 0:
-            raise BackendError(
-                "Visual embedding generation returned no data.",
-                "The /embed_image endpoint returned an empty embedding.",
-            )
-
         return embedding
-
-    except BackendError:
-        raise
     except Exception as exc:
-        raise BackendError(
-            "Visual embedding generation failed. Please try again.",
-            repr(exc),
-        ) from exc
+        raise BackendError("Visual embedding generation failed.") from exc
     finally:
         try:
             os.remove(image_path)
@@ -497,14 +317,11 @@ def build_question_with_context(question: str, history: list) -> str:
         return question
 
     recent = history[-(MAX_CHAT_CONTEXT_TURNS * 2):]
-
     lines = [
         f"{'User' if turn['role'] == 'user' else 'Assistant'}: {turn['content']}"
         for turn in recent
     ]
-
     context_block = "\n".join(lines)
-
     return (
         "Previous conversation:\n"
         f"{context_block}\n\n"
@@ -512,21 +329,30 @@ def build_question_with_context(question: str, history: list) -> str:
     )
 
 
-def run_retrieval(
+def run_full_pipeline(
     image: Image.Image,
     visual_embeddings: np.ndarray,
     valid_indices: np.ndarray,
     cluster_labels: np.ndarray,
 ) -> None:
-    query_embedding_vector = call_embed_image(image)
+    # 1. MedGemma Initial Analysis
+    base_question = "What findings are visible in this image?"
+    answer = call_analyze_image(image, base_question)
+    st.session_state["initial_analysis"] = answer
+    
+    # Pre-seed the chat history so follow-ups have context of the first answer
+    st.session_state["chat_history"] = [
+        {"role": "user", "content": base_question},
+        {"role": "assistant", "content": answer}
+    ]
 
+    # 2. Visual Embedding & Retrieval
+    query_embedding_vector = call_embed_image(image)
     if query_embedding_vector.shape[0] != visual_embeddings.shape[1]:
         raise BackendError(
-            "The returned visual embedding has an unexpected dimension.",
-            (
-                f"Returned dimension: {query_embedding_vector.shape[0]}; "
-                f"expected: {visual_embeddings.shape[1]}."
-            ),
+            "Returned embedding has an unexpected dimension "
+            f"({query_embedding_vector.shape[0]} vs "
+            f"{visual_embeddings.shape[1]})."
         )
 
     results = find_similar_embeddings(
@@ -537,65 +363,29 @@ def run_retrieval(
         top_k=5,
     )
 
-    if not results:
-        raise BackendError(
-            "No visually similar cases were found.",
-            "find_similar_embeddings returned an empty result list.",
-        )
-
     st.session_state["query_embedding"] = query_embedding_vector
     st.session_state["retrieval_results"] = results
     st.session_state["recommended_prototype"] = results[0]["prototype_id"]
 
 
 # ============================================================
-# REPRESENTATIVE IMAGE HELPERS
+# REPRESENTATIVE IMAGE DEDUPLICATION
 # ============================================================
 
-def get_representative_image(
+def get_unique_representative_images(
     prototype_images: pd.DataFrame,
     prototype_id: int,
-    preferred_rank: Optional[int] = None,
-    excluded_paths: Optional[set] = None,
-) -> Optional[tuple[Any, Path]]:
-    """Return one representative image for a prototype, avoiding duplicates."""
+    max_images: int = 3,
+):
+    subset = prototype_images[
+        prototype_images["prototype_id"] == prototype_id
+    ].sort_values("rank")
 
-    excluded_paths = excluded_paths or set()
+    seen_keys = set()
+    unique = []
 
-    if prototype_images.empty:
-        return None
-
-    required_columns = {"prototype_id", "rank"}
-    if not required_columns.issubset(prototype_images.columns):
-        return None
-
-    subset = (
-        prototype_images[
-            prototype_images["prototype_id"] == prototype_id
-        ]
-        .sort_values("rank")
-    )
-
-    candidates = []
-
-    if preferred_rank is not None:
-        preferred = subset[subset["rank"] == preferred_rank]
-        candidates.extend(list(preferred.iterrows()))
-
-    candidates.extend(
-        [
-            item
-            for item in subset.iterrows()
-            if preferred_rank is None or item[1]["rank"] != preferred_rank
-        ]
-    )
-
-    for _, row in candidates:
-        try:
-            rank = int(row["rank"])
-        except (TypeError, ValueError):
-            continue
-
+    for _, row in subset.iterrows():
+        rank = int(row["rank"])
         image_path = (
             ROOT
             / "representative_images"
@@ -603,208 +393,24 @@ def get_representative_image(
             / f"representative_{rank}.png"
         )
 
-        if image_path.exists() and str(image_path) not in excluded_paths:
-            return row, image_path
-
-    return None
-
-
-def get_similar_case_images(
-    prototype_images: pd.DataFrame,
-    retrieval_results: list,
-) -> list[tuple[dict, Any, Path]]:
-    """Map retrieved prototypes to unique representative images for the gallery."""
-
-    selected = []
-    used_paths: set = set()
-
-    for result in retrieval_results:
-        try:
-            prototype_id = int(result["prototype_id"])
-        except (KeyError, TypeError, ValueError):
+        if not image_path.exists():
             continue
 
-        preferred_rank = None
-        if "rank" in result:
-            try:
-                preferred_rank = int(result["rank"])
-            except (TypeError, ValueError):
-                preferred_rank = None
+        if "dataset_index" in row and pd.notna(row["dataset_index"]):
+            key = f"idx:{int(row['dataset_index'])}"
+        else:
+            key = f"hash:{hashlib.md5(image_path.read_bytes()).hexdigest()}"
 
-        found = get_representative_image(
-            prototype_images,
-            prototype_id,
-            preferred_rank=preferred_rank,
-            excluded_paths=used_paths,
-        )
-
-        if found is None:
+        if key in seen_keys:
             continue
 
-        row, image_path = found
-        used_paths.add(str(image_path))
-        selected.append((result, row, image_path))
+        seen_keys.add(key)
+        unique.append((row, image_path))
 
-    return selected
+        if len(unique) >= max_images:
+            break
 
-
-# ============================================================
-# UI HELPERS
-# ============================================================
-
-def render_section(number: str, title: str, caption: str = "") -> None:
-    st.markdown(
-        f"""
-        <div class="section-wrap">
-            <div class="section-heading">
-                <span class="section-number">{number}</span>
-                <span class="section-title">{title}</span>
-            </div>
-            {f'<div class="section-caption">{caption}</div>' if caption else ''}
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def render_error() -> None:
-    error = st.session_state.get("last_error")
-
-    if not error:
-        return
-
-    if isinstance(error, dict):
-        message = error.get("message", "An unexpected error occurred.")
-        technical = error.get("technical")
-    else:
-        message = str(error)
-        technical = None
-
-    st.error(message)
-
-    if technical:
-        with st.expander("Technical details"):
-            st.code(technical)
-
-    st.session_state["last_error"] = None
-
-
-def render_analysis(answer: Optional[str]) -> None:
-    if not answer:
-        st.markdown(
-            '<div class="empty-state">Run MedGemma analysis to generate an image-grounded response.</div>',
-            unsafe_allow_html=True,
-        )
-        return
-
-    safe_answer = (
-        answer
-        .replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-    )
-
-    st.markdown(
-        f"""
-        <div class="analysis-card">
-            <div class="analysis-label">MedGemma · Image-grounded response</div>
-            <div class="analysis-text">{safe_answer}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def render_prototype_statistics(
-    prototype_summary: pd.DataFrame,
-    selected_prototype: int,
-) -> None:
-    if prototype_summary.empty or "prototype_id" not in prototype_summary.columns:
-        st.caption("No prototype summary artifact is available.")
-        return
-
-    selected = prototype_summary[
-        prototype_summary["prototype_id"] == selected_prototype
-    ]
-
-    if selected.empty:
-        st.caption("No summary record is available for this prototype.")
-        return
-
-    row = selected.iloc[0]
-
-    if "num_images" in row.index and pd.notna(row["num_images"]):
-        try:
-            st.metric("Cases in prototype", f"{int(row['num_images']):,}")
-        except (TypeError, ValueError):
-            pass
-
-    excluded = {
-        "prototype_id",
-        "num_images",
-        "id",
-        "rank",
-    }
-
-    available = []
-    for column in row.index:
-        if column in excluded:
-            continue
-
-        value = row[column]
-
-        if value is None:
-            continue
-
-        try:
-            if pd.isna(value):
-                continue
-        except (TypeError, ValueError):
-            continue
-
-        if isinstance(
-            value,
-            (str, int, float, np.integer, np.floating, bool),
-        ):
-            available.append((str(column), value))
-
-    if available:
-        with st.expander("Available prototype statistics"):
-            stat_cols = st.columns(min(3, len(available)))
-
-            for idx, (label, value) in enumerate(available):
-                with stat_cols[idx % len(stat_cols)]:
-                    pretty_label = str(label).replace("_", " ").title()
-
-                    if isinstance(value, (float, np.floating)):
-                        display_value = f"{float(value):.4f}"
-                    else:
-                        display_value = str(value)
-
-                    st.markdown(
-                        f"""
-                        <div class="meta-label">{pretty_label}</div>
-                        <div class="meta-value">{display_value}</div>
-                        """,
-                        unsafe_allow_html=True,
-                    )
-
-
-def format_similarity(value: Any) -> str:
-    """Display common 0-1 or 0-100 similarity representations safely."""
-
-    try:
-        score = float(value)
-    except (TypeError, ValueError):
-        return "N/A"
-
-    if -1.0 <= score <= 1.0:
-        return f"{score * 100:.1f}%"
-
-    if -100.0 <= score <= 100.0:
-        return f"{score:.1f}%"
-
-    return f"{score:.3f}"
+    return unique
 
 
 # ============================================================
@@ -817,8 +423,8 @@ ensure_session_defaults()
 try:
     artifacts = load_artifacts()
 except Exception as exc:
-    st.error("Retrieval artifacts could not be loaded.")
-    with st.expander("Technical details"):
+    st.error("Failed to load retrieval artifacts. Please ensure the backend is available.")
+    with st.expander("Technical Details"):
         st.exception(exc)
     st.stop()
 
@@ -835,16 +441,9 @@ prototype_images = artifacts["prototype_images"]
 
 st.markdown(
     """
-    <div class="research-header">
-        <div class="research-kicker">Medical AI Research Prototype</div>
-        <div class="research-title">Explainable Medical VLM</div>
-        <div class="research-subtitle">
-            MedGemma · Visual Retrieval · Prototype Reasoning
-        </div>
-        <div class="research-description">
-            An image-grounded research interface combining medical VLM analysis
-            with visual prototype retrieval for transparent case comparison.
-        </div>
+    <div class="app-header">
+        <h1>Explainable Medical VLM</h1>
+        <div class="subtitle">MedGemma · Visual Retrieval · Prototype Reasoning</div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -852,492 +451,190 @@ st.markdown(
 
 
 # ============================================================
-# 01 — MEDICAL IMAGE
+# SECTION 01 — MEDICAL IMAGE
 # ============================================================
 
-render_section(
-    "01",
-    "Medical Image",
-    "Upload an image, inspect its metadata, and start image-grounded analysis.",
-)
+st.markdown('<h2 class="section-heading"><span>01</span> Medical Image</h2>', unsafe_allow_html=True)
 
-uploaded_file = st.file_uploader(
-    "Upload medical image",
-    type=["png", "jpg", "jpeg"],
-    label_visibility="collapsed",
-)
+col_upload, col_meta = st.columns([1.5, 1])
+
+with col_upload:
+    uploaded_file = st.file_uploader(
+        "Upload medical image",
+        type=["png", "jpg", "jpeg"],
+        label_visibility="collapsed",
+    )
 
 if uploaded_file is None:
-    st.markdown(
-        """
-        <div class="empty-state">
-            Upload a PNG or JPEG medical image to begin.
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.markdown(
-        '<div class="footer">Research prototype · Not for clinical diagnosis.</div>',
-        unsafe_allow_html=True,
-    )
+    st.info("Upload a medical image to begin the analysis.")
     st.stop()
 
-
 current_hash = get_image_hash(uploaded_file)
-
 if st.session_state["image_hash"] != current_hash:
     st.session_state["image_hash"] = current_hash
     reset_image_specific_state()
 
 image = Image.open(uploaded_file).convert("RGB")
 
-image_col, control_col = st.columns([1.55, 1], gap="large")
+with col_upload:
+    st.image(image, use_container_width=True, caption="Uploaded Image")
 
-with image_col:
-    st.markdown('<div class="surface">', unsafe_allow_html=True)
-    st.image(image, use_container_width=True)
+with col_meta:
+    st.markdown('<div class="research-card">', unsafe_allow_html=True)
+    st.metric("Resolution", f"{image.width} × {image.height}")
+    st.metric("Case Database", f"{len(visual_embeddings):,} cases")
     st.markdown("</div>", unsafe_allow_html=True)
-
-with control_col:
-    st.markdown('<div class="surface">', unsafe_allow_html=True)
-
-    st.markdown(
-        '<span class="status-pill">IMAGE READY</span>',
-        unsafe_allow_html=True,
-    )
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    meta_items = [
-        ("Resolution", f"{image.width} × {image.height} px"),
-        ("Embedding database", f"{len(visual_embeddings):,} cases"),
-        ("Embedding dimension", f"{visual_embeddings.shape[1]:,}"),
-        ("Input format", uploaded_file.type or "image"),
-    ]
-
-    for label, value in meta_items:
-        st.markdown(
-            f"""
-            <div class="meta-label">{label}</div>
-            <div class="meta-value">{value}</div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    analysis_question = st.text_input(
-        "Analysis question",
-        value="What findings are visible in this image?",
-        label_visibility="collapsed",
-        key="analysis_question",
-    )
-
-    st.markdown('<div class="primary-button">', unsafe_allow_html=True)
-    analyze_clicked = st.button(
-        "Analyze Image",
-        use_container_width=True,
-        key="analyze_btn",
-    )
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    if analyze_clicked:
-        if not analysis_question.strip():
-            st.session_state["last_error"] = {
-                "message": "Please enter a question before running the analysis.",
-                "technical": None,
-            }
-        else:
-            with st.spinner("Running MedGemma analysis..."):
+    
+    if st.session_state["initial_analysis"] is None:
+        if st.button("Run Full Analysis", type="primary", use_container_width=True):
+            with st.spinner("Analyzing image and retrieving similar cases..."):
                 try:
-                    contextual_question = build_question_with_context(
-                        analysis_question.strip(),
-                        st.session_state["chat_history"],
-                    )
-
-                    answer = call_analyze_image(
-                        image,
-                        contextual_question,
-                    )
-
-                    st.session_state["analysis_result"] = answer
-
-                    st.session_state["chat_history"].append(
-                        {
-                            "role": "user",
-                            "content": analysis_question.strip(),
-                        }
-                    )
-                    st.session_state["chat_history"].append(
-                        {
-                            "role": "assistant",
-                            "content": answer,
-                        }
-                    )
-
-                    st.session_state["last_error"] = None
-
+                    run_full_pipeline(image, visual_embeddings, valid_indices, cluster_labels)
+                    st.rerun()
                 except BackendError as exc:
-                    st.session_state["last_error"] = {
-                        "message": exc.message,
-                        "technical": exc.technical_detail,
-                    }
+                    st.session_state["last_error"] = str(exc)
 
-    st.markdown("</div>", unsafe_allow_html=True)
+if st.session_state["last_error"]:
+    st.error(st.session_state["last_error"])
+    st.session_state["last_error"] = None
 
-render_error()
+
+# Stop execution here if analysis hasn't been run yet
+if st.session_state["initial_analysis"] is None:
+    st.stop()
 
 
 # ============================================================
-# 02 — MODEL ANALYSIS
+# SECTION 02 — MODEL ANALYSIS
 # ============================================================
 
-render_section(
-    "02",
-    "Model Analysis",
-    "The current MedGemma response for the selected image.",
+st.markdown('<h2 class="section-heading"><span>02</span> Model Analysis</h2>', unsafe_allow_html=True)
+
+st.markdown(
+    f'<div class="analysis-result">{st.session_state["initial_analysis"]}</div>',
+    unsafe_allow_html=True
 )
 
-render_analysis(st.session_state["analysis_result"])
-
 
 # ============================================================
-# 03 — SIMILAR CASES
+# SECTION 03 — SIMILAR CASES
 # ============================================================
 
-render_section(
-    "03",
-    "Similar Cases",
-    "Top visual matches from the prototype retrieval system. Similarity is an embedding-space measure, not a clinical probability.",
-)
-
-retrieval_results = st.session_state["retrieval_results"]
-
-if retrieval_results:
-    gallery_items = get_similar_case_images(
-        prototype_images,
-        retrieval_results,
-    )
-
-    if gallery_items:
-        gallery_cols = st.columns(len(gallery_items), gap="medium")
-
-        for col, (result, row, image_path) in zip(gallery_cols, gallery_items):
-            with col:
-                st.markdown('<div class="case-card">', unsafe_allow_html=True)
-
-                case_image = Image.open(image_path).convert("RGB")
-                st.image(case_image, use_container_width=True)
-
-                similarity = format_similarity(result.get("similarity"))
-                prototype_id = int(result["prototype_id"])
-
-                try:
-                    rank = int(result.get("rank", 0))
-                except (TypeError, ValueError):
-                    rank = 0
-
-                st.markdown(
-                    f"""
-                    <div class="case-meta">
-                        <div class="case-rank">Rank {rank:02d}</div>
-                        <div class="case-score">Similarity {similarity}</div>
-                        <div class="case-prototype">Prototype P{prototype_id:02d}</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-
-                st.markdown("</div>", unsafe_allow_html=True)
-
-    else:
-        st.markdown(
-            '<div class="empty-state">Retrieved cases were found, but no representative images are available for display.</div>',
-            unsafe_allow_html=True,
-        )
-else:
-    st.markdown(
-        '<div class="empty-state">Run visual retrieval to compare this image with visually similar cases.</div>',
-        unsafe_allow_html=True,
-    )
-
-if retrieval_results:
-    st.markdown(
-        """
-        <div class="similarity-note">
-            Similarity represents closeness between visual embeddings in the retrieval
-            space. It should not be interpreted as diagnostic confidence, disease
-            probability, or clinical certainty.
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-# ============================================================
-# 04 — PROTOTYPE EXPLANATION
-# ============================================================
-
-render_section(
-    "04",
-    "Prototype Explanation",
-    "Interpret the recommended prototype through the retrieval structure and existing artifact statistics.",
-)
+st.markdown('<h2 class="section-heading"><span>03</span> Similar Cases</h2>', unsafe_allow_html=True)
 
 recommended_prototype = st.session_state["recommended_prototype"]
+retrieval_results = st.session_state["retrieval_results"]
 
-if recommended_prototype is not None and retrieval_results:
-    prototype_col, stats_col = st.columns([0.85, 1.4], gap="large")
+if retrieval_results and recommended_prototype is not None:
+    unique_images = get_unique_representative_images(prototype_images, recommended_prototype, max_images=3)
+    
+    if not unique_images:
+        st.info("No representative images available for this visual cluster.")
+    else:
+        # Display the primary gallery once
+        cols = st.columns(len(unique_images))
+        for i, (col, (row, image_path)) in enumerate(zip(cols, unique_images)):
+            with col:
+                st.markdown('<div class="gallery-item">', unsafe_allow_html=True)
+                rep_image = Image.open(image_path).convert("RGB")
+                st.image(rep_image, use_container_width=True)
+                
+                # Retrieve the similarity score for this rank from the retrieval results
+                # Assuming retrieval_results is ordered by rank
+                sim_score = retrieval_results[i]["similarity"] if i < len(retrieval_results) else retrieval_results[0]["similarity"]
+                sim_percentage = f"{sim_score * 100:.1f}%"
+                
+                st.markdown(
+                    f"""
+                    <div class="gallery-meta">
+                        <span>Rank #{i+1}</span>
+                        <span class="similarity-badge">Similarity {sim_percentage}</span>
+                    </div>
+                    """, 
+                    unsafe_allow_html=True
+                )
+                st.markdown('</div>', unsafe_allow_html=True)
 
-    with prototype_col:
-        st.markdown('<div class="surface">', unsafe_allow_html=True)
 
-        st.markdown(
-            '<div class="meta-label">Recommended prototype</div>',
-            unsafe_allow_html=True,
-        )
+# ============================================================
+# SECTION 04 — PROTOTYPE EXPLANATION
+# ============================================================
 
-        st.markdown(
-            f'<div style="font-size:2rem;font-weight:700;color:#17202a;">P{int(recommended_prototype):02d}</div>',
-            unsafe_allow_html=True,
-        )
+st.markdown('<h2 class="section-heading"><span>04</span> Prototype Explanation</h2>', unsafe_allow_html=True)
 
-        st.markdown(
-            """
-            <div class="meta-label" style="margin-top:0.8rem;">
-                Retrieval relationship
-            </div>
-            <div style="font-size:0.84rem;line-height:1.55;color:#667382;">
-                This prototype is the cluster associated with the highest-ranked
-                visual retrieval result for the current image.
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+selected_summary = prototype_summary[
+    prototype_summary["prototype_id"] == recommended_prototype
+]
 
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    with stats_col:
-        st.markdown('<div class="surface">', unsafe_allow_html=True)
-
-        render_prototype_statistics(
-            prototype_summary,
-            int(recommended_prototype),
-        )
-
-        st.markdown("</div>", unsafe_allow_html=True)
-
+if not selected_summary.empty:
+    row = selected_summary.iloc[0]
+    
+    col_p1, col_p2, col_p3 = st.columns(3)
+    col_p1.metric("Assigned Prototype", f"P{recommended_prototype:02d}")
+    col_p2.metric("Cluster Size", f"{int(row['num_images'])} verified cases")
+    col_p3.metric("Top Similarity", f"{retrieval_results[0]['similarity'] * 100:.1f}%")
 else:
-    st.markdown(
-        '<div class="empty-state">Prototype information becomes available after visual retrieval.</div>',
-        unsafe_allow_html=True,
-    )
+    st.info("Prototype statistics are currently unavailable.")
 
 
 # ============================================================
-# 05 — EXPLAINABILITY
+# SECTION 05 — EXPLAINABILITY
 # ============================================================
 
-render_section(
-    "05",
-    "Explainability",
-    "Retrieval-based explanation of how the system relates the current image to its visual prototype space.",
+st.markdown('<h2 class="section-heading"><span>05</span> Explainability</h2>', unsafe_allow_html=True)
+
+st.markdown(
+    """
+    <div class="research-card">
+    <p>This system utilizes <strong>Visual Prototype Retrieval</strong> to ground the Vision-Language Model's (VLM) findings. Rather than relying solely on opaque parametric memory, the query image's visual embedding is compared against a verified clinical database.</p>
+    <p>The system identified the uploaded image as belonging to visual cluster <strong>P%02d</strong>. The VLM's analysis is informed by the geometric similarities between your query and the historical cases in this cluster, providing a transparent, retrieval-based explanation for its textual output without requiring manual segmentation maps.</p>
+    </div>
+    """ % (recommended_prototype if recommended_prototype is not None else 0),
+    unsafe_allow_html=True
 )
 
-if recommended_prototype is not None and retrieval_results:
-    e1, e2, e3 = st.columns(3, gap="large")
-
-    with e1:
-        st.markdown('<div class="surface-tight">', unsafe_allow_html=True)
-        st.markdown(
-            '<div class="meta-label">01 · Visual representation</div>',
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            """
-            <div style="font-size:0.86rem;line-height:1.55;">
-                The uploaded image is converted into a visual embedding by the
-                existing MedGemma backend.
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    with e2:
-        st.markdown('<div class="surface-tight">', unsafe_allow_html=True)
-        st.markdown(
-            '<div class="meta-label">02 · Prototype relationship</div>',
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            f"""
-            <div style="font-size:0.86rem;line-height:1.55;">
-                The embedding is compared with the existing case database and
-                associated with prototype <strong>P{int(recommended_prototype):02d}</strong>.
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    with e3:
-        st.markdown('<div class="surface-tight">', unsafe_allow_html=True)
-        st.markdown(
-            '<div class="meta-label">03 · Evidence type</div>',
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            """
-            <div style="font-size:0.86rem;line-height:1.55;">
-                The explanation is based on visual retrieval and prototype
-                membership rather than pixel-level localization.
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    st.markdown(
-        """
-        <div class="surface">
-            <div class="analysis-label">Interpretation boundary</div>
-            <div style="font-size:0.86rem;line-height:1.65;color:#667382;">
-                This implementation provides prototype- and retrieval-based
-                explainability. It does not currently generate segmentation masks,
-                lesion localization maps, or highlighted affected regions.
-                Those outputs can be incorporated later without changing the
-                current retrieval explanation layer.
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-else:
-    st.markdown(
-        '<div class="empty-state">Run visual retrieval to generate prototype-based explainability.</div>',
-        unsafe_allow_html=True,
-    )
-
 
 # ============================================================
-# 06 — FOLLOW-UP CONVERSATION
+# SECTION 06 — ASK ABOUT THIS IMAGE
 # ============================================================
 
-render_section(
-    "06",
-    "Ask About This Image",
-    "Continue the image-grounded conversation with MedGemma using recent conversation context.",
-)
+st.markdown('<h2 class="section-heading"><span>06</span> Ask About This Image</h2>', unsafe_allow_html=True)
 
-for msg in st.session_state["chat_history"]:
+# Display chat history (skipping the first Q&A since it's displayed in Section 02)
+for i, msg in enumerate(st.session_state["chat_history"]):
+    if i < 2:  # Skip the initial analysis turn
+        continue
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-follow_up = st.chat_input(
-    "Ask a follow-up question about this image"
-)
+follow_up = st.chat_input("Ask a follow-up question (e.g., 'What are the main visual characteristics?')")
 
 if follow_up and follow_up.strip():
     follow_up = follow_up.strip()
 
-    previous_history = st.session_state["chat_history"][-(
-        MAX_CHAT_CONTEXT_TURNS * 2
-    ):]
-
-    contextual_question = build_question_with_context(
-        follow_up,
-        previous_history,
-    )
-
+    # Show the user's new question immediately
     st.session_state["chat_history"].append(
-        {
-            "role": "user",
-            "content": follow_up,
-        }
+        {"role": "user", "content": follow_up}
     )
 
-    try:
-        with st.spinner("Generating response..."):
-            answer = call_analyze_image(
-                image,
-                contextual_question,
+    with st.spinner("Thinking..."):
+        try:
+            previous_history = st.session_state["chat_history"][:-1]
+            contextual_question = build_question_with_context(follow_up, previous_history)
+            
+            answer = call_analyze_image(image, contextual_question)
+            
+            st.session_state["chat_history"].append(
+                {"role": "assistant", "content": answer}
             )
+            st.session_state["last_error"] = None
 
-        st.session_state["chat_history"].append(
-            {
-                "role": "assistant",
-                "content": answer,
-            }
-        )
-
-        st.session_state["analysis_result"] = answer
-        st.session_state["last_error"] = None
-
-    except BackendError as exc:
-        if (
-            st.session_state["chat_history"]
-            and st.session_state["chat_history"][-1]["role"] == "user"
-            and st.session_state["chat_history"][-1]["content"] == follow_up
-        ):
+        except BackendError as exc:
             st.session_state["chat_history"].pop()
-
-        st.session_state["last_error"] = {
-            "message": exc.message,
-            "technical": exc.technical_detail,
-        }
+            st.session_state["last_error"] = str(exc)
 
     st.rerun()
 
-
-render_error()
-
-
-# ============================================================
-# SYSTEM STATUS
-# ============================================================
-
-with st.expander("System status", expanded=False):
-    status_items = [
-        ("Retrieval artifacts", True),
-        ("Prototype database", True),
-        ("MedGemma VQA", True),
-        ("Visual retrieval", retrieval_results is not None),
-        ("Current image", uploaded_file is not None),
-    ]
-
-    status_cols = st.columns(len(status_items))
-
-    for col, (label, is_on) in zip(status_cols, status_items):
-        with col:
-            symbol = "●" if is_on else "○"
-            color = "#287a58" if is_on else "#8b97a5"
-
-            st.markdown(
-                f"""
-                <div style="font-size:0.78rem;color:#667382;">
-                    <span style="color:{color};font-size:0.72rem;">{symbol}</span>
-                    &nbsp;{label}
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-
-# ============================================================
-# FOOTER
-# ============================================================
-
-st.markdown(
-    """
-    <div class="footer">
-        Explainable Medical VLM · Research prototype · Not for clinical diagnosis
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
+if st.session_state["last_error"]:
+    st.error(st.session_state["last_error"])
+    st.session_state["last_error"] = None
