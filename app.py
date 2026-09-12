@@ -1,6 +1,9 @@
 from pathlib import Path
 
-app_code = r'''import hashlib
+# This creates a deployment-ready app.py from the Streamlit source in the user's
+# message, excluding the local file-generation wrapper that caused the
+# FileNotFoundError in Streamlit Cloud.
+source = r'''import hashlib
 import os
 import tempfile
 from pathlib import Path
@@ -75,8 +78,6 @@ def inject_custom_css() -> None:
             padding-bottom: 4rem;
         }
 
-        /* ---------- Global typography ---------- */
-
         h1, h2, h3, h4 {
             color: var(--text) !important;
             font-weight: 650 !important;
@@ -86,8 +87,6 @@ def inject_custom_css() -> None:
         p, li, label, .stMarkdown {
             color: var(--text);
         }
-
-        /* ---------- Header ---------- */
 
         .research-header {
             padding-bottom: 1.65rem;
@@ -127,8 +126,6 @@ def inject_custom_css() -> None:
             margin-top: 0.65rem;
         }
 
-        /* ---------- Sections ---------- */
-
         .section-wrap {
             margin-top: 2.2rem;
         }
@@ -159,8 +156,6 @@ def inject_custom_css() -> None:
             font-size: 0.79rem;
             margin: -0.35rem 0 0.9rem 1.95rem;
         }
-
-        /* ---------- Surfaces ---------- */
 
         .surface {
             background: var(--surface-2);
@@ -211,8 +206,6 @@ def inject_custom_css() -> None:
             font-size: 0.84rem;
         }
 
-        /* ---------- Metadata ---------- */
-
         .meta-label {
             color: var(--muted);
             font-size: 0.72rem;
@@ -243,8 +236,6 @@ def inject_custom_css() -> None:
             line-height: 1.45;
             margin-top: 0.7rem;
         }
-
-        /* ---------- Similar-case cards ---------- */
 
         .case-card {
             background: #ffffff;
@@ -280,15 +271,11 @@ def inject_custom_css() -> None:
             margin-top: 0.18rem;
         }
 
-        /* ---------- Chat ---------- */
-
         [data-testid="stChatMessage"] {
             background: #ffffff;
             border: 1px solid var(--border);
             border-radius: 10px;
         }
-
-        /* ---------- Inputs ---------- */
 
         .stTextInput input,
         .stTextArea textarea {
@@ -303,8 +290,6 @@ def inject_custom_css() -> None:
             border: 1px dashed var(--border-strong);
             border-radius: 10px;
         }
-
-        /* ---------- Buttons ---------- */
 
         .stButton > button {
             border-radius: 8px;
@@ -322,7 +307,6 @@ def inject_custom_css() -> None:
             color: var(--accent);
         }
 
-        /* Primary buttons */
         .primary-button .stButton > button {
             background: var(--accent);
             border-color: var(--accent);
@@ -334,8 +318,6 @@ def inject_custom_css() -> None:
             border-color: #126789;
             color: #ffffff;
         }
-
-        /* ---------- Metrics ---------- */
 
         [data-testid="stMetric"] {
             background: transparent;
@@ -354,14 +336,10 @@ def inject_custom_css() -> None:
             font-weight: 680 !important;
         }
 
-        /* ---------- Tables ---------- */
-
         [data-testid="stDataFrame"] {
             border: 1px solid var(--border);
             border-radius: 8px;
         }
-
-        /* ---------- Footer ---------- */
 
         .footer {
             margin-top: 3rem;
@@ -584,6 +562,13 @@ def get_representative_image(
 
     excluded_paths = excluded_paths or set()
 
+    if prototype_images.empty:
+        return None
+
+    required_columns = {"prototype_id", "rank"}
+    if not required_columns.issubset(prototype_images.columns):
+        return None
+
     subset = (
         prototype_images[
             prototype_images["prototype_id"] == prototype_id
@@ -606,7 +591,11 @@ def get_representative_image(
     )
 
     for _, row in candidates:
-        rank = int(row["rank"])
+        try:
+            rank = int(row["rank"])
+        except (TypeError, ValueError):
+            continue
+
         image_path = (
             ROOT
             / "representative_images"
@@ -630,7 +619,10 @@ def get_similar_case_images(
     used_paths: set = set()
 
     for result in retrieval_results:
-        prototype_id = int(result["prototype_id"])
+        try:
+            prototype_id = int(result["prototype_id"])
+        except (KeyError, TypeError, ValueError):
+            continue
 
         preferred_rank = None
         if "rank" in result:
@@ -705,7 +697,12 @@ def render_analysis(answer: Optional[str]) -> None:
         )
         return
 
-    safe_answer = answer.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    safe_answer = (
+        answer
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
 
     st.markdown(
         f"""
@@ -722,6 +719,10 @@ def render_prototype_statistics(
     prototype_summary: pd.DataFrame,
     selected_prototype: int,
 ) -> None:
+    if prototype_summary.empty or "prototype_id" not in prototype_summary.columns:
+        st.caption("No prototype summary artifact is available.")
+        return
+
     selected = prototype_summary[
         prototype_summary["prototype_id"] == selected_prototype
     ]
@@ -732,11 +733,12 @@ def render_prototype_statistics(
 
     row = selected.iloc[0]
 
-    # Core known field
-    if "num_images" in row.index:
-        st.metric("Cases in prototype", f"{int(row['num_images']):,}")
+    if "num_images" in row.index and pd.notna(row["num_images"]):
+        try:
+            st.metric("Cases in prototype", f"{int(row['num_images']):,}")
+        except (TypeError, ValueError):
+            pass
 
-    # Show only real fields present in the artifact.
     excluded = {
         "prototype_id",
         "num_images",
@@ -751,10 +753,19 @@ def render_prototype_statistics(
 
         value = row[column]
 
-        if pd.isna(value):
+        if value is None:
             continue
 
-        if isinstance(value, (str, int, float, np.integer, np.floating, bool)):
+        try:
+            if pd.isna(value):
+                continue
+        except (TypeError, ValueError):
+            continue
+
+        if isinstance(
+            value,
+            (str, int, float, np.integer, np.floating, bool),
+        ):
             available.append((str(column), value))
 
     if available:
@@ -777,6 +788,23 @@ def render_prototype_statistics(
                         """,
                         unsafe_allow_html=True,
                     )
+
+
+def format_similarity(value: Any) -> str:
+    """Display common 0-1 or 0-100 similarity representations safely."""
+
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return "N/A"
+
+    if -1.0 <= score <= 1.0:
+        return f"{score * 100:.1f}%"
+
+    if -100.0 <= score <= 100.0:
+        return f"{score:.1f}%"
+
+    return f"{score:.3f}"
 
 
 # ============================================================
@@ -1002,15 +1030,19 @@ if retrieval_results:
                 case_image = Image.open(image_path).convert("RGB")
                 st.image(case_image, use_container_width=True)
 
-                similarity = float(result["similarity"])
+                similarity = format_similarity(result.get("similarity"))
                 prototype_id = int(result["prototype_id"])
-                rank = int(result.get("rank", 0))
+
+                try:
+                    rank = int(result.get("rank", 0))
+                except (TypeError, ValueError):
+                    rank = 0
 
                 st.markdown(
                     f"""
                     <div class="case-meta">
                         <div class="case-rank">Rank {rank:02d}</div>
-                        <div class="case-score">Similarity {similarity * 100:.1f}%</div>
+                        <div class="case-score">Similarity {similarity}</div>
                         <div class="case-prototype">Prototype P{prototype_id:02d}</div>
                     </div>
                     """,
@@ -1114,9 +1146,6 @@ render_section(
 )
 
 if recommended_prototype is not None and retrieval_results:
-    top_result = retrieval_results[0]
-    top_similarity = float(top_result["similarity"])
-
     e1, e2, e3 = st.columns(3, gap="large")
 
     with e1:
@@ -1156,14 +1185,14 @@ if recommended_prototype is not None and retrieval_results:
     with e3:
         st.markdown('<div class="surface-tight">', unsafe_allow_html=True)
         st.markdown(
-            '<div class="meta-label">03 · Retrieval evidence</div>',
+            '<div class="meta-label">03 · Evidence type</div>',
             unsafe_allow_html=True,
         )
         st.markdown(
-            f"""
+            """
             <div style="font-size:0.86rem;line-height:1.55;">
-                The highest-ranked retrieved case has a visual similarity score
-                of <strong>{top_similarity * 100:.1f}%</strong>.
+                The explanation is based on visual retrieval and prototype
+                membership rather than pixel-level localization.
             </div>
             """,
             unsafe_allow_html=True,
@@ -1225,7 +1254,6 @@ if follow_up and follow_up.strip():
         previous_history,
     )
 
-    # Keep the user message visible while the request is processed.
     st.session_state["chat_history"].append(
         {
             "role": "user",
@@ -1251,7 +1279,6 @@ if follow_up and follow_up.strip():
         st.session_state["last_error"] = None
 
     except BackendError as exc:
-        # Remove only the just-added user message if the backend fails.
         if (
             st.session_state["chat_history"]
             and st.session_state["chat_history"][-1]["role"] == "user"
@@ -1315,7 +1342,12 @@ st.markdown(
 )
 '''
 
-out = Path("/mnt/data/app_redesigned.py")
-out.write_text(app_code, encoding="utf-8")
-print(f"Created: {out}")
-print(f"Lines: {len(app_code.splitlines())}")
+out = Path("/mnt/data/app.py")
+out.write_text(source, encoding="utf-8")
+
+# Syntax-check the actual deployment file before returning it.
+compile(source, str(out), "exec")
+
+print(f"Created deployment-ready Streamlit file: {out}")
+print(f"Lines: {len(source.splitlines())}")
+print("Syntax check: passed")
