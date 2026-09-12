@@ -1342,12 +1342,3 @@ st.markdown(
 )
 '''
 
-out = Path("/mnt/data/app.py")
-out.write_text(source, encoding="utf-8")
-
-# Syntax-check the actual deployment file before returning it.
-compile(source, str(out), "exec")
-
-print(f"Created deployment-ready Streamlit file: {out}")
-print(f"Lines: {len(source.splitlines())}")
-print("Syntax check: passed")
