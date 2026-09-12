@@ -8,7 +8,7 @@ from textwrap import dedent
 import numpy as np
 import pandas as pd
 import streamlit as st
-from PIL import Image
+from PIL import Image, ImageFilter
 
 from src.retrieval import load_retrieval_artifacts
 
@@ -17,8 +17,14 @@ from src.retrieval import load_retrieval_artifacts
 # CONFIGURATION
 # ============================================================
 
+APP_NAME = "MedXplain"
+APP_SUBTITLE = (
+    "Interpretable medical image understanding through visual "
+    "evidence and prototypes"
+)
+
 st.set_page_config(
-    page_title="Explainable Medical VLM",
+    page_title=APP_NAME,
     page_icon="🩺",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -50,11 +56,7 @@ def render_html(content: str) -> None:
 
 
 def section_header(number: str, title: str, subtitle: str = "") -> None:
-    sub = (
-        f'<div class="s-desc">{html.escape(subtitle)}</div>'
-        if subtitle
-        else ""
-    )
+    sub = f'<div class="s-desc">{html.escape(subtitle)}</div>' if subtitle else ""
     render_html(
         f"""
         <div class="s-head">
@@ -63,6 +65,18 @@ def section_header(number: str, title: str, subtitle: str = "") -> None:
                 <div class="s-title">{html.escape(title)}</div>
                 {sub}
             </div>
+        </div>
+        """
+    )
+
+
+def empty_state(title: str, detail: str = "") -> None:
+    detail_html = f'<div class="empty-x">{html.escape(detail)}</div>' if detail else ""
+    render_html(
+        f"""
+        <div class="empty">
+            <div class="empty-t">{html.escape(title)}</div>
+            {detail_html}
         </div>
         """
     )
@@ -78,14 +92,13 @@ st.markdown(
 
     .stApp {
         background:
-            radial-gradient(circle at 8% 0%,
-                rgba(70,90,115,0.12), transparent 34%),
+            radial-gradient(circle at 8% 0%, rgba(70,90,115,0.12), transparent 34%),
             #0b0f14;
         color: #e8edf3;
     }
 
     .block-container {
-        max-width: 1220px;
+        max-width: 1080px;
         padding-top: 1.4rem;
         padding-bottom: 2rem;
     }
@@ -95,33 +108,27 @@ st.markdown(
 
     /* ---------- HERO ---------- */
     .hero {
-        padding: 1.2rem 1.5rem 1.1rem 1.5rem;
-        border-radius: 16px;
+        padding: 1.1rem 1.4rem;
+        border-radius: 14px;
         border: 1px solid rgba(255,255,255,0.07);
-        background: linear-gradient(135deg,
-            rgba(24,31,40,0.96), rgba(13,18,24,0.96));
-        box-shadow: 0 12px 36px rgba(0,0,0,0.22);
-        margin-bottom: 1rem;
+        background: linear-gradient(135deg, rgba(24,31,40,0.96), rgba(13,18,24,0.96));
+        margin-bottom: 1.1rem;
     }
     .hero-title {
-        font-size: 1.7rem;
-        font-weight: 760;
-        letter-spacing: -0.035em;
+        font-size: 1.55rem;
+        font-weight: 780;
+        letter-spacing: -0.02em;
         color: #f4f7fa;
-        line-height: 1.12;
     }
     .hero-sub {
-        margin-top: 0.22rem;
+        margin-top: 0.25rem;
         color: #a4aeb9;
-        font-size: 0.88rem;
+        font-size: 0.85rem;
     }
-    .hero-row {
-        display: flex; flex-wrap: wrap;
-        gap: 0.35rem; margin-top: 0.7rem;
-    }
+    .hero-row { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.65rem; }
     .badge {
         display: inline-flex; align-items: center;
-        padding: 0.24rem 0.55rem;
+        padding: 0.22rem 0.55rem;
         border-radius: 999px;
         border: 1px solid rgba(255,255,255,0.09);
         background: rgba(255,255,255,0.04);
@@ -134,213 +141,91 @@ st.markdown(
         background: rgba(105,150,205,0.08);
         color: #aec8e5;
     }
-    .badge-green {
-        border-color: rgba(90,180,120,0.23);
-        background: rgba(90,180,120,0.075);
-        color: #a6d7b6;
-    }
-    .hero-note {
-        margin-top: 0.7rem;
-        color: #7a8692;
-        font-size: 0.7rem;
-    }
 
     /* ---------- SECTION HEADER ---------- */
-    .s-head {
-        display: flex; align-items: center;
-        gap: 0.6rem; margin: 1.5rem 0 0.6rem 0;
-    }
+    .s-head { display: flex; align-items: center; gap: 0.6rem; margin: 1.6rem 0 0.6rem 0; }
     .s-num {
-        width: 28px; height: 28px; flex: 0 0 28px;
+        width: 26px; height: 26px; flex: 0 0 26px;
         border-radius: 8px;
         display: flex; align-items: center; justify-content: center;
         background: rgba(255,255,255,0.06);
         border: 1px solid rgba(255,255,255,0.08);
         color: #d7e0e8;
-        font-size: 0.7rem; font-weight: 750;
+        font-size: 0.68rem; font-weight: 750;
     }
-    .s-title {
-        color: #edf1f5;
-        font-size: 1rem;
-        font-weight: 720;
-        letter-spacing: -0.01em;
-    }
-    .s-desc {
-        margin-top: 0.04rem;
-        color: #7f8b98;
-        font-size: 0.73rem;
-    }
-
-    /* ---------- METRIC STRIP ---------- */
-    .metrics {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(115px, 1fr));
-        gap: 0.45rem;
-        margin-bottom: 0.75rem;
-    }
-    .metric {
-        padding: 0.55rem 0.7rem;
-        border-radius: 9px;
-        border: 1px solid rgba(255,255,255,0.06);
-        background: rgba(255,255,255,0.022);
-    }
-    .m-label {
-        color: #778492;
-        font-size: 0.58rem;
-        font-weight: 750;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-    }
-    .m-value {
-        margin-top: 0.15rem;
-        color: #e4eaf0;
-        font-size: 0.95rem;
-        font-weight: 650;
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    }
-    .m-value.ok { color: #a6d7b6; }
+    .s-title { color: #edf1f5; font-size: 0.98rem; font-weight: 720; letter-spacing: -0.01em; }
+    .s-desc { margin-top: 0.03rem; color: #7f8b98; font-size: 0.72rem; }
 
     /* ---------- OBSERVATION CARD ---------- */
     .obs-card {
-        padding: 0.95rem 1.05rem;
+        padding: 0.9rem 1.05rem;
         border-radius: 12px;
         border: 1px solid rgba(105,145,190,0.18);
-        background: linear-gradient(135deg,
-            rgba(50,72,98,0.16), rgba(20,27,35,0.86));
+        background: linear-gradient(135deg, rgba(50,72,98,0.16), rgba(20,27,35,0.86));
     }
     .obs-label {
-        color: #8094a9;
-        font-size: 0.6rem; font-weight: 750;
-        letter-spacing: 0.09em;
-        text-transform: uppercase;
-        margin-bottom: 0.4rem;
+        color: #8094a9; font-size: 0.6rem; font-weight: 750;
+        letter-spacing: 0.09em; text-transform: uppercase; margin-bottom: 0.4rem;
     }
-    .obs-text {
-        color: #e9eef3;
-        font-size: 0.94rem;
-        line-height: 1.5;
-    }
+    .obs-text { color: #e9eef3; font-size: 0.93rem; line-height: 1.5; }
 
-    /* ---------- MINI CASE CARD ---------- */
-    .case-mini {
+    /* ---------- CASE CARD (similar cases) ---------- */
+    .case-meta {
         margin-top: 0.4rem;
-        padding: 0.45rem 0.6rem;
-        border-radius: 9px;
-        border: 1px solid rgba(255,255,255,0.06);
-        background: rgba(255,255,255,0.02);
-        display: flex;
-        justify-content: space-between;
-        align-items: baseline;
-        gap: 0.5rem;
+        text-align: center;
     }
-    .case-mini-title {
-        color: #dfe6ec;
-        font-size: 0.82rem;
-        font-weight: 650;
-    }
-    .case-mini-meta {
-        color: #8996a3;
-        font-size: 0.72rem;
+    .case-title { color: #dfe6ec; font-size: 0.83rem; font-weight: 650; }
+    .case-sub {
+        color: #8996a3; font-size: 0.74rem;
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        margin-top: 0.1rem;
     }
 
     /* ---------- PROTOTYPE HEADER ---------- */
     .proto-header {
-        display: flex; align-items: center; justify-content: space-between;
-        flex-wrap: wrap; gap: 0.7rem;
-        padding: 0.8rem 1rem;
-        border-radius: 12px;
-        border: 1px solid rgba(255,255,255,0.07);
-        background: linear-gradient(135deg,
-            rgba(28,35,44,0.95), rgba(17,22,29,0.95));
-        margin-bottom: 0.65rem;
+        display: flex; align-items: baseline; justify-content: space-between;
+        flex-wrap: wrap; gap: 0.5rem;
+        margin-bottom: 0.75rem;
     }
-    .proto-id {
-        color: #e9eef3;
-        font-size: 1rem;
-        font-weight: 750;
-    }
-    .proto-desc {
-        margin-top: 0.12rem;
-        color: #929eaa;
-        font-size: 0.72rem;
-    }
+    .proto-id { color: #e9eef3; font-size: 1.05rem; font-weight: 750; }
     .proto-aff {
-        display: flex; align-items: baseline; gap: 0.45rem;
-    }
-    .proto-aff-label {
-        color: #778492;
-        font-size: 0.58rem; font-weight: 750;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-    }
-    .proto-aff-val {
-        color: #e6edf4;
-        font-size: 1.1rem; font-weight: 750;
+        color: #a4aeb9; font-size: 0.82rem;
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     }
-
-    /* ---------- NEIGHBOURS TABLE ---------- */
-    .neighbors {
-        display: grid;
-        grid-template-columns: 1fr 1fr 1fr;
-        gap: 0.25rem 0.6rem;
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        font-size: 0.82rem;
-    }
-    .neighbors .hdr {
-        color: #778492;
-        font-size: 0.58rem; font-weight: 750;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        font-family: system-ui, sans-serif;
-        padding-bottom: 0.1rem;
-        border-bottom: 1px solid rgba(255,255,255,0.06);
-    }
-    .neighbors .cell { color: #dfe6ec; padding-top: 0.15rem; }
-    .neighbors .cell.muted { color: #a3aeb9; }
+    .proto-aff b { color: #e6edf4; font-weight: 700; }
 
     /* ---------- MUTED / CAPTION ---------- */
-    .muted {
-        color: #7a8692;
-        font-size: 0.7rem;
-        line-height: 1.45;
-        margin-top: 0.35rem;
+    .muted { color: #7a8692; font-size: 0.7rem; line-height: 1.45; margin-top: 0.5rem; }
+    .compact-line {
+        color: #96a1ac; font-size: 0.76rem;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        margin-top: 0.55rem;
     }
-    .img-caption {
-        margin-top: 0.3rem;
-        text-align: center;
-        color: #6f7c88;
-        font-size: 0.66rem;
-    }
-    .img-placeholder {
-        padding: 2rem 0.5rem;
-        border-radius: 11px;
-        border: 1px dashed rgba(255,255,255,0.1);
-        background: rgba(255,255,255,0.015);
-        text-align: center;
-        color: #7a8692;
-        font-size: 0.72rem;
+    .img-label {
+        color: #8996a3; font-size: 0.64rem; font-weight: 750;
+        letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 0.4rem;
     }
 
     /* ---------- EMPTY STATES ---------- */
     .empty {
-        padding: 1.1rem 0.9rem;
+        padding: 0.9rem 0.9rem;
         border-radius: 11px;
         border: 1px dashed rgba(255,255,255,0.10);
         background: rgba(255,255,255,0.017);
         text-align: center;
     }
-    .empty-t {
-        color: #d6dee5;
-        font-size: 0.82rem;
-        font-weight: 700;
-    }
-    .empty-x {
-        margin-top: 0.18rem;
-        color: #77838f;
-        font-size: 0.7rem;
-        line-height: 1.4;
+    .empty-t { color: #d6dee5; font-size: 0.8rem; font-weight: 700; }
+    .empty-x { margin-top: 0.16rem; color: #77838f; font-size: 0.7rem; line-height: 1.4; }
+
+    /* ---------- IMAGE SIZING (single source of truth) ---------- */
+    [data-testid="stImage"] img {
+        border-radius: 10px;
+        object-fit: contain;
+        max-height: 360px;
+        width: auto;
+        max-width: 100%;
+        margin: 0 auto;
+        display: block;
     }
 
     /* ---------- INPUTS ---------- */
@@ -349,13 +234,7 @@ st.markdown(
         background: rgba(255,255,255,0.022) !important;
         border: 1px dashed rgba(255,255,255,0.12) !important;
     }
-    div[data-baseweb="select"] > div { border-radius: 9px; }
-    .stButton > button {
-        border-radius: 8px;
-        font-weight: 600;
-        font-size: 0.8rem;
-    }
-    [data-testid="stImage"] img { border-radius: 10px; }
+    .stButton > button { border-radius: 8px; font-weight: 600; font-size: 0.8rem; }
 
     /* ---------- FOOTER ---------- */
     .footer {
@@ -509,9 +388,7 @@ def resolve_demo_image(dataset_index, row=None):
         candidate = ROOT / str(image_path)
         if candidate.exists():
             try:
-                candidate.resolve().relative_to(
-                    PROTOTYPE_IMAGES_DIR.resolve()
-                )
+                candidate.resolve().relative_to(PROTOTYPE_IMAGES_DIR.resolve())
                 return None
             except ValueError:
                 return candidate.resolve()
@@ -522,9 +399,7 @@ def resolve_demo_image(dataset_index, row=None):
 def find_demo_case_by_hash(file_hash):
     if demo_df.empty or "image_hash" not in demo_df.columns:
         return None
-    matches = demo_df[
-        demo_df["image_hash"].astype(str) == str(file_hash)
-    ]
+    matches = demo_df[demo_df["image_hash"].astype(str) == str(file_hash)]
     if matches.empty:
         return None
     return matches.iloc[0].to_dict()
@@ -559,9 +434,7 @@ def calculate_prototype_affinity(embedding, prototype_id):
     if prototype_id < 0 or prototype_id >= len(centroids):
         return None
 
-    centroid = np.asarray(
-        centroids[prototype_id], dtype=np.float32
-    ).reshape(-1)
+    centroid = np.asarray(centroids[prototype_id], dtype=np.float32).reshape(-1)
     embedding = np.asarray(embedding, dtype=np.float32).reshape(-1)
 
     if centroid.shape[0] == embedding.shape[0]:
@@ -579,30 +452,6 @@ def calculate_prototype_affinity(embedding, prototype_id):
         return None
 
 
-def get_prototype_description(prototype_id):
-    summary = artifacts.get("prototype_summary")
-    if summary is None or summary.empty:
-        return "Learned visual prototype."
-    if "prototype_id" not in summary.columns:
-        return "Learned visual prototype."
-    matches = summary[
-        summary["prototype_id"].astype(str) == str(prototype_id)
-    ]
-    if matches.empty:
-        return "Learned visual prototype."
-    row = matches.iloc[0]
-    for column in (
-        "description", "prototype_description",
-        "summary", "interpretation",
-    ):
-        if column not in row.index:
-            continue
-        value = row[column]
-        if pd.notna(value) and str(value).strip():
-            return str(value)
-    return "Learned visual prototype."
-
-
 def get_unique_prototype_images(prototype_id, exclude_hashes=None):
     candidates = []
     prototype_df = artifacts.get("prototype_images")
@@ -612,16 +461,10 @@ def get_unique_prototype_images(prototype_id, exclude_hashes=None):
         and not prototype_df.empty
         and "prototype_id" in prototype_df.columns
     ):
-        matches = prototype_df[
-            prototype_df["prototype_id"].astype(str)
-            == str(prototype_id)
-        ]
+        matches = prototype_df[prototype_df["prototype_id"].astype(str) == str(prototype_id)]
         for _, row in matches.iterrows():
             found = False
-            for column in (
-                "image_path", "representative_image",
-                "image", "filename",
-            ):
+            for column in ("image_path", "representative_image", "image", "filename"):
                 if column not in row.index:
                     continue
                 value = row[column]
@@ -630,10 +473,7 @@ def get_unique_prototype_images(prototype_id, exclude_hashes=None):
                 value = str(value).strip()
                 if not value:
                     continue
-                for candidate in (
-                    ROOT / value,
-                    PROTOTYPE_IMAGES_DIR / value,
-                ):
+                for candidate in (ROOT / value, PROTOTYPE_IMAGES_DIR / value):
                     if candidate.exists():
                         candidates.append(candidate)
                         found = True
@@ -643,16 +483,13 @@ def get_unique_prototype_images(prototype_id, exclude_hashes=None):
 
     if not candidates:
         try:
-            folder = (
-                PROTOTYPE_IMAGES_DIR / f"P{int(prototype_id):02d}"
-            )
+            folder = PROTOTYPE_IMAGES_DIR / f"P{int(prototype_id):02d}"
         except Exception:
             folder = None
         if folder is not None and folder.exists():
             candidates = sorted(
                 p for p in folder.iterdir()
-                if p.is_file()
-                and p.suffix.lower() in IMAGE_EXTENSIONS
+                if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS
             )
 
     unique = []
@@ -694,21 +531,13 @@ def retrieve_similar_cases(
     exclude_hashes=None,
     top_k=MAX_SIMILAR_CASES,
 ):
-    debug = {
-        "db_shape": None,
-        "candidates_scanned": 0,
-        "exact_embedding_duplicates": 0,
-    }
+    debug = {"db_shape": None, "candidates_scanned": 0, "exact_embedding_duplicates": 0}
 
-    embeddings = np.asarray(
-        artifacts["visual_embeddings"], dtype=np.float32
-    )
+    embeddings = np.asarray(artifacts["visual_embeddings"], dtype=np.float32)
     valid_indices = np.asarray(artifacts["valid_indices"])
     cluster_labels = np.asarray(artifacts["cluster_labels"])
 
-    query_embedding = np.asarray(
-        query_embedding, dtype=np.float32
-    ).reshape(-1)
+    query_embedding = np.asarray(query_embedding, dtype=np.float32).reshape(-1)
 
     if embeddings.ndim != 2:
         return [], debug
@@ -737,10 +566,7 @@ def retrieve_similar_cases(
         debug["candidates_scanned"] += 1
         dataset_index = int(valid_indices[row_index])
 
-        if (
-            exclude_dataset_index is not None
-            and dataset_index == int(exclude_dataset_index)
-        ):
+        if exclude_dataset_index is not None and dataset_index == int(exclude_dataset_index):
             continue
         if dataset_index in seen_dataset_indices:
             continue
@@ -817,24 +643,18 @@ def run_precomputed_case(demo_case, query_image_hash=None):
         dataset_index = int(demo_case["dataset_index"])
         embedding_row = int(demo_case["embedding_row"])
 
-        embeddings = np.asarray(
-            artifacts["visual_embeddings"], dtype=np.float32
-        )
+        embeddings = np.asarray(artifacts["visual_embeddings"], dtype=np.float32)
         if embedding_row < 0 or embedding_row >= embeddings.shape[0]:
-            st.session_state.error = (
-                f"Embedding row {embedding_row} is out of range."
-            )
+            st.session_state.error = f"Embedding row {embedding_row} is out of range."
             return False
 
-        embedding = np.asarray(
-            embeddings[embedding_row], dtype=np.float32
-        )
+        embedding = np.asarray(embeddings[embedding_row], dtype=np.float32)
 
         answer = (
             demo_case.get("answer")
             or demo_case.get("analysis")
             or demo_case.get("initial_analysis")
-            or "No precomputed observation is available for this case."
+            or "No observation is available for this case."
         )
 
         try:
@@ -844,8 +664,7 @@ def run_precomputed_case(demo_case, query_image_hash=None):
 
         prototype_similarity = (
             calculate_prototype_affinity(embedding, prototype_id)
-            if prototype_id is not None
-            else None
+            if prototype_id is not None else None
         )
 
         exclude_hashes = set()
@@ -859,17 +678,11 @@ def run_precomputed_case(demo_case, query_image_hash=None):
             top_k=MAX_SIMILAR_CASES,
         )
 
-        similar_hashes = {
-            r["image_hash"] for r in similar_cases
-            if r.get("image_hash")
-        }
+        similar_hashes = {r["image_hash"] for r in similar_cases if r.get("image_hash")}
 
         prototype_images = (
-            get_unique_prototype_images(
-                prototype_id, exclude_hashes=similar_hashes
-            )
-            if prototype_id is not None
-            else []
+            get_unique_prototype_images(prototype_id, exclude_hashes=similar_hashes)
+            if prototype_id is not None else []
         )
 
         st.session_state.analysis = str(answer)
@@ -887,15 +700,10 @@ def run_precomputed_case(demo_case, query_image_hash=None):
             "embedding_row": embedding_row,
             "prototype_id": prototype_id,
             "top_similarity": (
-                float(similar_cases[0]["similarity"])
-                if similar_cases else None
+                float(similar_cases[0]["similarity"]) if similar_cases else None
             ),
             "unique_retrieved": debug.get("unique_retrieved", 0),
             "requested": debug.get("requested", MAX_SIMILAR_CASES),
-            "exact_embedding_duplicates": debug.get(
-                "exact_embedding_duplicates", 0
-            ),
-            "prototype_images_found": len(prototype_images),
             "qa_count": len(parse_qa(demo_case.get("qa"))),
         }
 
@@ -915,19 +723,12 @@ def build_case_context():
     if not st.session_state.demo_case:
         return None
     return {
-        "dataset_index": int(
-            st.session_state.demo_case.get("dataset_index", -1)
-        ),
+        "dataset_index": int(st.session_state.demo_case.get("dataset_index", -1)),
         "prototype_id": st.session_state.prototype_id,
         "prototype_affinity": st.session_state.prototype_similarity,
         "analysis": st.session_state.analysis,
         "qa": parse_qa(st.session_state.demo_case.get("qa")),
         "retrieval": list(st.session_state.retrieval_results or []),
-        "prototype_description": (
-            get_prototype_description(st.session_state.prototype_id)
-            if st.session_state.prototype_id is not None
-            else None
-        ),
     }
 
 
@@ -966,7 +767,6 @@ def answer_user_question(question, context):
     if not q:
         return "Please type a question about the selected image."
 
-    # 1) Precomputed QA — best semantic match
     matched = _match_qa(question, context.get("qa") or {})
     if matched is not None:
         return str(context["qa"][matched])
@@ -977,81 +777,174 @@ def answer_user_question(question, context):
     aff_txt = f"{float(aff):.5f}" if aff is not None else "not available"
     ret = context.get("retrieval") or []
 
-    # 2) Model observation
     if any(k in q for k in (
-        "what does the model see", "what does medgemma",
-        "what does the model say", "model observation",
-        "medgemma observation", "what findings", "what is visible",
-        "what do you see", "describe the image", "describe this image",
+        "what does the model see", "what does medgemma", "what does the model say",
+        "model observation", "medgemma observation", "what findings",
+        "what is visible", "what do you see", "describe the image", "describe this image",
     )):
         obs = context.get("analysis") or "No observation available."
         return f'MedGemma observation: "{obs}"'
 
-    # 3) Prototype
     if any(k in q for k in (
-        "what is the prototype", "which prototype",
-        "why p", "why is this image assigned",
-        "why was this image assigned", "assigned to p",
+        "what is the prototype", "which prototype", "why p",
+        "why is this image assigned", "why was this image assigned", "assigned to p",
     )):
         if pid is None:
             return "No visual prototype is associated with this case."
         return (
-            f"Assigned to visual prototype {pid_txt} with affinity "
-            f"{aff_txt}. This is a learned visual grouping, not a "
-            "clinical diagnosis."
+            f"Assigned to visual prototype {pid_txt} with affinity {aff_txt}. "
+            "This is a learned visual grouping, not a clinical diagnosis."
         )
 
     if "affinity" in q:
         if aff is None:
             return "Prototype affinity is not available for this case."
         return (
-            f"Prototype affinity is {float(aff):.5f} — cosine "
-            "similarity to the prototype centroid."
+            f"Prototype affinity is {float(aff):.5f} — cosine similarity to the "
+            "prototype centroid."
         )
 
-    # 4) Similar cases
     if any(k in q for k in (
-        "similar", "reference case", "nearest",
-        "why is this case", "why are these", "retrieved",
+        "similar", "reference case", "nearest", "why is this case",
+        "why are these", "retrieved",
     )):
         if not ret:
             return "No reference cases were retrieved for this image."
         cases = ", ".join(str(int(r["dataset_index"])) for r in ret)
         sims = ", ".join(f"{float(r['similarity']):.5f}" for r in ret)
-        return (
-            f"Nearest visual neighbours are Cases {cases} "
-            f"(cosine similarity: {sims})."
-        )
+        return f"Nearest visual neighbours are Cases {cases} (cosine similarity: {sims})."
 
-    # 5) Pipeline
     if any(k in q for k in (
-        "how does", "how were", "pipeline",
-        "explainability", "how is similarity",
-        "how does similarity",
+        "how does", "how were", "pipeline", "explainability",
+        "how is similarity", "how does similarity",
     )):
         return (
-            "Each image is mapped to a 1152-D visual embedding; "
-            "cosine similarity ranks the reference database; the "
-            "image is assigned a learned visual prototype. Retrieval "
-            "is a separate layer from MedGemma's precomputed output."
+            "Each image has a 1152-D visual embedding; cosine similarity ranks the "
+            "reference database; the image is assigned a learned visual prototype. "
+            "Retrieval is a separate layer from MedGemma's observation."
         )
 
-    # 6) Evidence inventory
-    if any(k in q for k in (
-        "what evidence", "what is available", "what can you",
-    )):
+    if any(k in q for k in ("what evidence", "what is available", "what can you")):
         return (
-            f"Available: prototype {pid_txt}, "
-            f"{len(ret)} retrieved neighbours, "
-            f"{len(context.get('qa') or {})} precomputed VQA entries, "
-            "and one MedGemma observation."
+            f"Available: prototype {pid_txt}, {len(ret)} retrieved neighbours, "
+            f"{len(context.get('qa') or {})} precomputed VQA entries, and one "
+            "MedGemma observation."
         )
 
-    # 7) Fallback
-    return (
-        "That information is not available in the current "
-        "precomputed evidence."
+    return "That information is not available in the current evidence."
+
+
+# ============================================================
+# FINDING-GUIDED VISUALIZATION
+# ============================================================
+
+def generate_finding_guided_heatmap(image, observation=""):
+    """
+    Generate a finding-guided visualization from the image and the
+    precomputed model observation.
+
+    This is NOT Grad-CAM, does not use MedGemma gradients, and does not
+    perform clinical lesion segmentation. It combines anatomical-region
+    heuristics, image intensity/contrast, and spatial priors into a
+    research-demo visual aid only.
+    """
+
+    original = image.convert("RGB")
+    max_size = 768
+    if max(original.size) > max_size:
+        scale = max_size / max(original.size)
+        new_size = (int(original.width * scale), int(original.height * scale))
+        original = original.resize(new_size, Image.Resampling.LANCZOS)
+
+    gray = original.convert("L")
+    arr = np.asarray(gray, dtype=np.float32)
+    h, w = arr.shape
+
+    norm = (arr - arr.min()) / (arr.max() - arr.min()) if arr.max() > arr.min() else np.zeros_like(arr)
+
+    blurred = gray.filter(ImageFilter.GaussianBlur(radius=max(8, int(w * 0.025))))
+    smooth = np.asarray(blurred, dtype=np.float32) / 255.0
+    local_contrast = np.abs(norm - smooth)
+
+    gx = np.zeros_like(norm)
+    gy = np.zeros_like(norm)
+    gx[:, 1:-1] = np.abs(norm[:, 2:] - norm[:, :-2])
+    gy[1:-1, :] = np.abs(norm[2:, :] - norm[:-2, :])
+    variation = np.sqrt(gx ** 2 + gy ** 2)
+
+    yy, xx = np.mgrid[0:h, 0:w]
+    x = xx / max(w - 1, 1)
+    y = yy / max(h - 1, 1)
+
+    text = str(observation or "").lower()
+    center_x, center_y = 0.50, 0.50
+    spread_x, spread_y = 0.30, 0.28
+
+    if any(t in text for t in (
+        "periventricular", "white matter", "hyperintensit", "infarct",
+        "infarcted", "ischemi", "lesion", "ischemic",
+    )):
+        center_x, center_y = 0.50, 0.50
+        spread_x, spread_y = 0.25, 0.22
+
+    if "frontal" in text:
+        center_x, center_y = 0.50, 0.30
+        spread_x, spread_y = 0.27, 0.18
+    elif "parietal" in text:
+        center_x, center_y = 0.50, 0.43
+        spread_x, spread_y = 0.28, 0.18
+    elif "temporal" in text:
+        center_x, center_y = 0.50, 0.62
+        spread_x, spread_y = 0.30, 0.20
+    elif "occipital" in text:
+        center_x, center_y = 0.50, 0.76
+        spread_x, spread_y = 0.27, 0.17
+
+    if re.search(r"\bleft\b|\bleft-sided\b|\bleft side\b", text):
+        center_x = 0.35
+    elif re.search(r"\bright\b|\bright-sided\b|\bright side\b", text):
+        center_x = 0.65
+
+    spatial_prior = np.exp(
+        -(((x - center_x) ** 2 / (2 * spread_x ** 2)) + ((y - center_y) ** 2 / (2 * spread_y ** 2)))
     )
+
+    cx, cy, rx, ry = 0.50, 0.50, 0.43, 0.45
+    brain_mask = (((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 <= 1.0).astype(np.float32)
+    mask_img = Image.fromarray((brain_mask * 255).astype(np.uint8)).filter(
+        ImageFilter.GaussianBlur(radius=10)
+    )
+    brain_mask = np.asarray(mask_img, dtype=np.float32) / 255.0
+
+    finding_signal = (0.65 * spatial_prior + 0.25 * local_contrast + 0.10 * variation)
+    finding_signal *= brain_mask
+
+    valid_mask = brain_mask > 0.15
+    if valid_mask.any():
+        threshold = np.percentile(finding_signal[valid_mask], 35)
+        finding_signal[finding_signal < threshold] = 0
+
+    signal_img = Image.fromarray(np.clip(finding_signal * 255, 0, 255).astype(np.uint8))
+    signal_img = signal_img.filter(ImageFilter.GaussianBlur(radius=12))
+    finding_signal = np.asarray(signal_img, dtype=np.float32) / 255.0
+
+    valid = finding_signal[valid_mask] if valid_mask.any() else finding_signal
+    if valid.size > 0:
+        low = np.percentile(valid, 20)
+        high = np.percentile(valid, 98)
+        if high > low:
+            finding_signal = np.clip((finding_signal - low) / (high - low), 0, 1)
+    finding_signal *= brain_mask
+
+    hmap = np.clip(finding_signal, 0, 1)
+    r = np.clip(2.0 * hmap - 0.5, 0, 1)
+    g = np.clip(2.0 * hmap, 0, 1)
+    b = np.clip(1.5 - 2.0 * hmap, 0, 1)
+    rgb = np.stack([r, g, b], axis=-1)
+    heatmap = Image.fromarray((rgb * 255).astype(np.uint8), mode="RGB")
+
+    overlay = Image.blend(original.convert("RGB"), heatmap, alpha=0.40)
+    return heatmap, overlay
 
 
 # ============================================================
@@ -1059,20 +952,14 @@ def answer_user_question(question, context):
 # ============================================================
 
 render_html(
-    """
+    f"""
     <div class="hero">
-        <div class="hero-title">🩺 Explainable Medical VLM</div>
-        <div class="hero-sub">
-            Prototype-grounded visual evidence for medical image analysis
-        </div>
+        <div class="hero-title">{html.escape(APP_NAME)}</div>
+        <div class="hero-sub">{html.escape(APP_SUBTITLE)}</div>
         <div class="hero-row">
-            <span class="badge badge-blue">MedGemma 1.5 4B</span>
+            <span class="badge badge-blue">MedGemma</span>
             <span class="badge">Visual Retrieval</span>
-            <span class="badge">Learned Prototypes</span>
-            <span class="badge badge-green">Offline Demo</span>
-        </div>
-        <div class="hero-note">
-            Research demo · Precomputed outputs · Not for clinical diagnosis
+            <span class="badge">Prototype Evidence</span>
         </div>
     </div>
     """
@@ -1083,13 +970,15 @@ render_html(
 # 01 — MEDICAL IMAGE
 # ============================================================
 
-section_header("01", "Medical Image", "Prepared demonstration case")
+section_header("01", "Medical Image")
 
 uploaded_file = st.file_uploader(
     "Upload a medical image",
     type=["png", "jpg", "jpeg", "webp"],
     label_visibility="collapsed",
 )
+
+case = None
 
 if uploaded_file is not None:
     try:
@@ -1101,184 +990,52 @@ if uploaded_file is not None:
             st.session_state.image_hash = current_hash
             demo_case = find_demo_case_by_hash(current_hash)
             if demo_case is not None:
-                run_precomputed_case(
-                    demo_case, query_image_hash=current_hash
-                )
+                run_precomputed_case(demo_case, query_image_hash=current_hash)
             else:
                 st.session_state.error = (
-                    "This image is not in the prepared demonstration "
-                    "library. Live MedGemma inference is not enabled "
-                    "in this public demo."
+                    "This image is not part of the prepared demonstration set."
                 )
 
         image = Image.open(uploaded_file).convert("RGB")
         case = st.session_state.demo_case
 
-        left, right = st.columns([1.55, 1], gap="large")
-
-        with left:
+        center_l, center_m, center_r = st.columns([1, 2, 1])
+        with center_m:
             st.image(image, use_container_width=True)
-            st.caption(f"📄 {uploaded_file.name}")
-
-        with right:
-            if case is not None:
-                dataset_val = int(case["dataset_index"])
-                proto_val = (
-                    f"P{int(case['prototype_id']):02d}"
-                    if pd.notna(case.get("prototype_id"))
-                    else "—"
-                )
-                render_html(
-                    f"""
-                    <div class="metrics"
-                         style="grid-template-columns: 1fr 1fr;">
-                        <div class="metric">
-                            <div class="m-label">Dataset</div>
-                            <div class="m-value">{dataset_val}</div>
-                        </div>
-                        <div class="metric">
-                            <div class="m-label">Prototype</div>
-                            <div class="m-value">{html.escape(proto_val)}</div>
-                        </div>
-                        <div class="metric" style="grid-column: span 2;">
-                            <div class="m-label">Status</div>
-                            <div class="m-value ok">✓ Prepared</div>
-                        </div>
-                    </div>
-                    """
-                )
-            else:
-                render_html(
-                    """
-                    <div class="empty">
-                        <div class="empty-t">
-                            Not in demonstration library
-                        </div>
-                        <div class="empty-x">
-                            This public demo supports prepared cases
-                            with precomputed results.
-                        </div>
-                    </div>
-                    """
-                )
 
         if st.session_state.error:
             st.warning(st.session_state.error)
 
     except Exception as exc:
         st.error(f"Unable to process image: {exc}")
+else:
+    empty_state("Upload a medical image to begin")
 
 
 # ============================================================
-# SYSTEM INFO
+# 02 — MODEL FINDING
 # ============================================================
 
-with st.expander("⚙️ System information", expanded=False):
-    debug = st.session_state.get("debug") or {}
-    db_shape = debug.get("db_shape")
-    db_text = f"{db_shape[0]} × {db_shape[1]}" if db_shape else "—"
-    row_text = (
-        str(int(debug["embedding_row"]))
-        if debug.get("embedding_row") is not None else "—"
-    )
-    proto_dbg = debug.get("prototype_id")
-    proto_text = (
-        f"P{int(proto_dbg):02d}" if proto_dbg is not None else "—"
-    )
-    aff_dbg = st.session_state.prototype_similarity
-    aff_text = f"{float(aff_dbg):.5f}" if aff_dbg is not None else "—"
-    unique_txt = (
-        f"{debug.get('unique_retrieved', 0)} / "
-        f"{debug.get('requested', MAX_SIMILAR_CASES)}"
-    )
-    qa_txt = str(debug.get("qa_count", "—"))
-    dataset_dbg = (
-        int(st.session_state.demo_case["dataset_index"])
-        if st.session_state.demo_case is not None else None
-    )
-    dataset_text = str(dataset_dbg) if dataset_dbg is not None else "—"
-
-    render_html(
-        f"""
-        <div class="metrics">
-            <div class="metric">
-                <div class="m-label">Embedding</div>
-                <div class="m-value">{html.escape(db_text)}</div>
-            </div>
-            <div class="metric">
-                <div class="m-label">Dataset index</div>
-                <div class="m-value">{html.escape(dataset_text)}</div>
-            </div>
-            <div class="metric">
-                <div class="m-label">Embedding row</div>
-                <div class="m-value">{html.escape(row_text)}</div>
-            </div>
-            <div class="metric">
-                <div class="m-label">Prototype</div>
-                <div class="m-value">{html.escape(proto_text)}</div>
-            </div>
-            <div class="metric">
-                <div class="m-label">Affinity</div>
-                <div class="m-value">{html.escape(aff_text)}</div>
-            </div>
-            <div class="metric">
-                <div class="m-label">Retrieved</div>
-                <div class="m-value">{html.escape(unique_txt)}</div>
-            </div>
-            <div class="metric">
-                <div class="m-label">VQA entries</div>
-                <div class="m-value">{html.escape(qa_txt)}</div>
-            </div>
-        </div>
-        """
-    )
-    st.caption(
-        "Similarity values are computed exactly and never adjusted "
-        "for display."
-    )
-
-
-# ============================================================
-# 02 — MODEL ANALYSIS
-# ============================================================
-
-section_header(
-    "02", "Model Analysis", "Precomputed MedGemma observation"
-)
+section_header("02", "Model Finding")
 
 if st.session_state.analysis:
-    safe_analysis = html.escape(str(st.session_state.analysis))
     render_html(
         f"""
         <div class="obs-card">
             <div class="obs-label">MedGemma observation</div>
-            <div class="obs-text">{safe_analysis}</div>
-            <div style="margin-top:0.55rem;">
-                <span class="badge">Precomputed</span>
-                <span class="badge">Image-grounded</span>
-            </div>
+            <div class="obs-text">{html.escape(str(st.session_state.analysis))}</div>
         </div>
         """
     )
 else:
-    render_html(
-        """
-        <div class="empty">
-            <div class="empty-t">Waiting for a prepared image</div>
-            <div class="empty-x">
-                Upload a demonstration image to display the
-                precomputed observation.
-            </div>
-        </div>
-        """
-    )
+    empty_state("No finding yet", "Upload a demonstration image to see the model finding.")
 
 
 # ============================================================
 # 03 — SIMILAR CASES
 # ============================================================
 
-section_header("03", "Similar Cases", "Nearest visual neighbours")
+section_header("03", "Similar Cases", "Visually similar reference cases")
 
 results = st.session_state.retrieval_results
 
@@ -1290,49 +1047,22 @@ if results:
             if image_path is not None and Path(image_path).exists():
                 st.image(str(image_path), use_container_width=True)
             else:
-                render_html(
-                    """
-                    <div class="img-placeholder">
-                        Image unavailable
-                    </div>
-                    """
-                )
-
-            sim = float(result["similarity"])
-            proto = int(result["prototype_id"])
+                empty_state("Image unavailable")
 
             render_html(
                 f"""
-                <div class="case-mini">
-                    <div class="case-mini-title">
-                        Case {int(result["dataset_index"])}
-                    </div>
-                    <div class="case-mini-meta">
-                        P{proto:02d} · {sim:.5f}
+                <div class="case-meta">
+                    <div class="case-title">Case {int(result["dataset_index"])}</div>
+                    <div class="case-sub">
+                        P{int(result["prototype_id"]):02d} · {float(result["similarity"]):.5f}
                     </div>
                 </div>
                 """
             )
-
-    render_html(
-        """
-        <div class="muted">
-            Ranked by cosine similarity in the learned visual
-            embedding space.
-        </div>
-        """
-    )
 else:
-    render_html(
-        """
-        <div class="empty">
-            <div class="empty-t">No retrieved cases yet</div>
-            <div class="empty-x">
-                Upload a prepared demonstration image to retrieve
-                visually similar reference cases.
-            </div>
-        </div>
-        """
+    empty_state(
+        "No retrieved cases yet",
+        "Upload a prepared demonstration image to retrieve similar reference cases.",
     )
 
 
@@ -1340,30 +1070,19 @@ else:
 # 04 — PROTOTYPE EVIDENCE
 # ============================================================
 
-section_header(
-    "04", "Prototype Evidence", "Learned visual prototype"
-)
+section_header("04", "Prototype Evidence")
 
 prototype_id = st.session_state.prototype_id
 
 if prototype_id is not None:
-    description = get_prototype_description(prototype_id)
     score = st.session_state.prototype_similarity
     score_text = f"{float(score):.5f}" if score is not None else "—"
 
     render_html(
         f"""
         <div class="proto-header">
-            <div>
-                <div class="proto-id">P{int(prototype_id):02d}</div>
-                <div class="proto-desc">
-                    {html.escape(str(description))}
-                </div>
-            </div>
-            <div class="proto-aff">
-                <span class="proto-aff-label">Affinity</span>
-                <span class="proto-aff-val">{score_text}</span>
-            </div>
+            <div class="proto-id">P{int(prototype_id):02d}</div>
+            <div class="proto-aff">Affinity <b>{score_text}</b></div>
         </div>
         """
     )
@@ -1372,50 +1091,18 @@ if prototype_id is not None:
 
     if prototype_images:
         columns = st.columns(len(prototype_images), gap="medium")
-        for index, (column, image_path) in enumerate(
-            zip(columns, prototype_images), start=1
-        ):
+        for column, image_path in zip(columns, prototype_images):
             with column:
                 st.image(str(image_path), use_container_width=True)
-                render_html(
-                    f"""
-                    <div class="img-caption">
-                        Representative {index}
-                    </div>
-                    """
-                )
-        render_html(
-            """
-            <div class="muted">
-                Learned visual prototype · latent representation
-            </div>
-            """
-        )
     else:
-        render_html(
-            """
-            <div class="empty">
-                <div class="empty-t">
-                    Representative images unavailable
-                </div>
-                <div class="empty-x">
-                    The prototype was identified, but no unique
-                    representative images could be resolved.
-                </div>
-            </div>
-            """
+        empty_state(
+            "Representative images unavailable",
+            "The prototype was identified, but no unique representative image could be resolved.",
         )
 else:
-    render_html(
-        """
-        <div class="empty">
-            <div class="empty-t">Prototype not available yet</div>
-            <div class="empty-x">
-                Upload a prepared demonstration image to identify
-                its learned visual prototype.
-            </div>
-        </div>
-        """
+    empty_state(
+        "Prototype not available yet",
+        "Upload a prepared demonstration image to identify its learned visual prototype.",
     )
 
 
@@ -1423,1107 +1110,92 @@ else:
 # 05 — EXPLAINABILITY
 # ============================================================
 
-section_header(
-    "05",
-    "Explainability",
-    "Case-specific visual evidence and finding-guided localization",
-)
-
-case = st.session_state.demo_case
-
-
-# ============================================================
-# FINDING-GUIDED LOCALIZATION
-# ============================================================
-
-def generate_finding_guided_heatmap(image, observation=""):
-    """
-    Generate a finding-guided visualization from the image and
-    the precomputed model observation.
-
-    IMPORTANT:
-    This is NOT Grad-CAM.
-    It does NOT use MedGemma gradients.
-    It does NOT perform clinical lesion segmentation.
-
-    The method combines:
-        1. anatomical-region heuristics,
-        2. image intensity,
-        3. local contrast,
-        4. spatial priors,
-        5. smooth Gaussian weighting.
-
-    It is intended only as a visual research-demo aid.
-    """
-
-    import re
-    import numpy as np
-    from PIL import Image, ImageFilter
-
-    # --------------------------------------------------------
-    # IMAGE PREPARATION
-    # --------------------------------------------------------
-
-    original = image.convert("RGB")
-
-    # Keep reasonable resolution
-    max_size = 768
-
-    if max(original.size) > max_size:
-        scale = max_size / max(original.size)
-        new_size = (
-            int(original.width * scale),
-            int(original.height * scale),
-        )
-        original = original.resize(
-            new_size,
-            Image.Resampling.LANCZOS
-        )
-
-    gray = original.convert("L")
-
-    arr = np.asarray(
-        gray,
-        dtype=np.float32
-    )
-
-    h, w = arr.shape
-
-    # Normalize
-    if arr.max() > arr.min():
-        norm = (
-            arr - arr.min()
-        ) / (
-            arr.max() - arr.min()
-        )
-    else:
-        norm = np.zeros_like(arr)
-
-
-    # ========================================================
-    # 1. IMAGE-BASED SIGNALS
-    # ========================================================
-
-    # Local contrast
-    blurred = gray.filter(
-        ImageFilter.GaussianBlur(radius=max(8, int(w * 0.025)))
-    )
-
-    smooth = (
-        np.asarray(
-            blurred,
-            dtype=np.float32
-        ) / 255.0
-    )
-
-    local_contrast = np.abs(
-        norm - smooth
-    )
-
-
-    # Local intensity variation
-    gx = np.zeros_like(norm)
-    gy = np.zeros_like(norm)
-
-    gx[:, 1:-1] = np.abs(
-        norm[:, 2:] - norm[:, :-2]
-    )
-
-    gy[1:-1, :] = np.abs(
-        norm[2:, :] - norm[:-2, :]
-    )
-
-    variation = np.sqrt(
-        gx ** 2 + gy ** 2
-    )
-
-
-    # ========================================================
-    # 2. SPATIAL COORDINATES
-    # ========================================================
-
-    yy, xx = np.mgrid[
-        0:h,
-        0:w
-    ]
-
-    x = xx / max(w - 1, 1)
-    y = yy / max(h - 1, 1)
-
-
-    # ========================================================
-    # 3. FINDING / ANATOMICAL CUES
-    # ========================================================
-
-    text = str(
-        observation or ""
-    ).lower()
-
-    # Default central-brain prior
-    center_x = 0.50
-    center_y = 0.50
-
-    spread_x = 0.30
-    spread_y = 0.28
-
-
-    # --------------------------------------------------------
-    # Brain / white matter / periventricular
-    # --------------------------------------------------------
-
-    if any(
-        term in text
-        for term in [
-            "periventricular",
-            "white matter",
-            "hyperintensit",
-            "infarct",
-            "infarcted",
-            "ischemi",
-            "lesion",
-            "ischemic",
-        ]
-    ):
-
-        # Central brain region
-        center_x = 0.50
-        center_y = 0.50
-
-        spread_x = 0.25
-        spread_y = 0.22
-
-
-    # --------------------------------------------------------
-    # Frontal
-    # --------------------------------------------------------
-
-    if "frontal" in text:
-
-        center_x = 0.50
-        center_y = 0.30
-
-        spread_x = 0.27
-        spread_y = 0.18
-
-
-    # --------------------------------------------------------
-    # Parietal
-    # --------------------------------------------------------
-
-    elif "parietal" in text:
-
-        center_x = 0.50
-        center_y = 0.43
-
-        spread_x = 0.28
-        spread_y = 0.18
-
-
-    # --------------------------------------------------------
-    # Temporal
-    # --------------------------------------------------------
-
-    elif "temporal" in text:
-
-        center_x = 0.50
-        center_y = 0.62
-
-        spread_x = 0.30
-        spread_y = 0.20
-
-
-    # --------------------------------------------------------
-    # Occipital
-    # --------------------------------------------------------
-
-    elif "occipital" in text:
-
-        center_x = 0.50
-        center_y = 0.76
-
-        spread_x = 0.27
-        spread_y = 0.17
-
-
-    # --------------------------------------------------------
-    # Left / right
-    # --------------------------------------------------------
-
-    if re.search(
-        r"\bleft\b|\bleft-sided\b|\bleft side\b",
-        text
-    ):
-
-        center_x = 0.35
-
-
-    elif re.search(
-        r"\bright\b|\bright-sided\b|\bright side\b",
-        text
-    ):
-
-        center_x = 0.65
-
-
-    # ========================================================
-    # 4. ANATOMICAL SPATIAL PRIOR
-    # ========================================================
-
-    spatial_prior = np.exp(
-        -(
-            (
-                (x - center_x) ** 2
-                / (2 * spread_x ** 2)
-            )
-            +
-            (
-                (y - center_y) ** 2
-                / (2 * spread_y ** 2)
-            )
-        )
-    )
-
-
-    # ========================================================
-    # 5. SUPPRESS OUTER SKULL / SCALP
-    # ========================================================
-
-    # Elliptical brain-region approximation.
-    # This intentionally suppresses the strong skull boundary
-    # that caused the previous saliency map to fail.
-
-    cx = 0.50
-    cy = 0.50
-
-    rx = 0.43
-    ry = 0.45
-
-    brain_mask = (
-        (
-            (x - cx) / rx
-        ) ** 2
-        +
-        (
-            (y - cy) / ry
-        ) ** 2
-        <= 1.0
-    )
-
-    brain_mask = brain_mask.astype(
-        np.float32
-    )
-
-    # Smooth mask
-    mask_img = Image.fromarray(
-        (brain_mask * 255).astype(np.uint8)
-    ).filter(
-        ImageFilter.GaussianBlur(radius=10)
-    )
-
-    brain_mask = (
-        np.asarray(
-            mask_img,
-            dtype=np.float32
-        ) / 255.0
-    )
-
-
-    # ========================================================
-    # 6. FINDING-GUIDED SIGNAL
-    # ========================================================
-
-    # The spatial prior is the dominant signal.
-    #
-    # Image information is used only to make the highlighted
-    # region follow local structures rather than producing
-    # a completely artificial blob.
-
-    finding_signal = (
-        0.65 * spatial_prior
-        +
-        0.25 * local_contrast
-        +
-        0.10 * variation
-    )
-
-    finding_signal *= brain_mask
-
-
-    # ========================================================
-    # 7. REMOVE VERY LOW ACTIVATION
-    # ========================================================
-
-    threshold = np.percentile(
-        finding_signal[brain_mask > 0.15],
-        35
-    )
-
-    finding_signal[
-        finding_signal < threshold
-    ] = 0
-
-
-    # ========================================================
-    # 8. SMOOTH
-    # ========================================================
-
-    signal_img = Image.fromarray(
-        np.clip(
-            finding_signal * 255,
-            0,
-            255
-        ).astype(np.uint8)
-    )
-
-    signal_img = signal_img.filter(
-        ImageFilter.GaussianBlur(radius=12)
-    )
-
-    finding_signal = (
-        np.asarray(
-            signal_img,
-            dtype=np.float32
-        ) / 255.0
-    )
-
-
-    # ========================================================
-    # 9. ROBUST NORMALIZATION
-    # ========================================================
-
-    valid = finding_signal[
-        brain_mask > 0.15
-    ]
-
-    if valid.size > 0:
-
-        low = np.percentile(
-            valid,
-            20
-        )
-
-        high = np.percentile(
-            valid,
-            98
-        )
-
-        if high > low:
-
-            finding_signal = np.clip(
-                (
-                    finding_signal - low
-                )
-                /
-                (
-                    high - low
-                ),
-                0,
-                1
-            )
-
-    finding_signal *= brain_mask
-
-
-    # ========================================================
-    # 10. HEATMAP
-    # ========================================================
-
-    hmap = np.clip(
-        finding_signal,
-        0,
-        1
-    )
-
-    # Blue → cyan → yellow → red
-    r = np.clip(
-        2.0 * hmap - 0.5,
-        0,
-        1
-    )
-
-    g = np.clip(
-        2.0 * hmap,
-        0,
-        1
-    )
-
-    b = np.clip(
-        1.5 - 2.0 * hmap,
-        0,
-        1
-    )
-
-    rgb = np.stack(
-        [r, g, b],
-        axis=-1
-    )
-
-    heatmap = Image.fromarray(
-        (
-            rgb * 255
-        ).astype(np.uint8),
-        mode="RGB"
-    )
-
-
-    # ========================================================
-    # 11. OVERLAY
-    # ========================================================
-
-    base = original.convert(
-        "RGB"
-    )
-
-    overlay = Image.blend(
-        base,
-        heatmap,
-        alpha=0.40
-    )
-
-    return (
-        heatmap,
-        overlay
-    )
-
-
-# ============================================================
-# EMPTY STATE
-# ============================================================
+section_header("05", "Explainability")
 
 if case is None:
-
-    render_html(
-        """
-        <div class="empty">
-            <div class="empty-t">
-                Case-specific explanation not available yet
-            </div>
-
-            <div class="empty-x">
-                Upload a prepared demonstration image to see
-                case-specific visual evidence.
-            </div>
-        </div>
-        """
+    empty_state(
+        "Case-specific explanation not available yet",
+        "Upload a prepared demonstration image to see visual evidence.",
     )
-
-
 else:
-
-    # ========================================================
-    # CASE METADATA
-    # ========================================================
+    observation_text = st.session_state.analysis or "No observation available."
 
     try:
-        dataset_val = int(
-            case.get("dataset_index")
-        )
+        dataset_val = int(case.get("dataset_index"))
     except Exception:
         dataset_val = -1
 
-
-    proto_txt = (
-        f"P{int(prototype_id):02d}"
-        if prototype_id is not None
-        else "—"
-    )
-
-
-    aff_txt = (
-        f"{float(st.session_state.prototype_similarity):.5f}"
-        if st.session_state.prototype_similarity is not None
-        else "—"
-    )
-
-
-    # ========================================================
-    # SUMMARY METRICS
-    # ========================================================
-
-    render_html(
-        f"""
-        <div class="metrics">
-
-            <div class="metric">
-                <div class="m-label">Dataset</div>
-                <div class="m-value">
-                    {dataset_val}
-                </div>
-            </div>
-
-            <div class="metric">
-                <div class="m-label">Prototype</div>
-                <div class="m-value">
-                    {html.escape(proto_txt)}
-                </div>
-            </div>
-
-            <div class="metric">
-                <div class="m-label">Affinity</div>
-                <div class="m-value">
-                    {html.escape(aff_txt)}
-                </div>
-            </div>
-
-            <div class="metric">
-                <div class="m-label">Neighbours</div>
-                <div class="m-value">
-                    {len(results)}
-                </div>
-            </div>
-
-        </div>
-        """
-    )
-
-
-    # ========================================================
-    # MODEL FINDING
-    # ========================================================
-
-    observation_text = (
-        st.session_state.analysis
-        or "No precomputed observation is available."
-    )
-
-
-    render_html(
-        f"""
-        <div style="
-            margin-top:1.25rem;
-            margin-bottom:0.65rem;
-            color:#8996a3;
-            font-size:0.66rem;
-            font-weight:750;
-            letter-spacing:0.08em;
-            text-transform:uppercase;
-        ">
-            Model finding
-        </div>
-
-        <div class="obs-card">
-
-            <div class="obs-label">
-                Precomputed MedGemma observation
-            </div>
-
-            <div class="obs-text"
-                 style="font-style:italic;">
-                "{html.escape(str(observation_text))}"
-            </div>
-
-        </div>
-        """
-    )
-
-
-    # ========================================================
-    # LOAD CURRENT IMAGE
-    # ========================================================
-
     current_image = None
-
     try:
-
         image_path = None
-
         if dataset_val >= 0:
-
-            possible_paths = [
-
-                ROOT / "demo_images" /
-                f"case_{dataset_val:05d}_train.png",
-
-                ROOT / "demo_images" /
-                f"case_{dataset_val:05d}_train.jpg",
-
-                ROOT / "demo_images" /
-                f"case_{dataset_val:05d}_train.jpeg",
-
-            ]
-
-            for p in possible_paths:
-
-                if p.exists():
-
-                    image_path = p
-                    break
-
-
-        if image_path is None:
-
-            case_path = case.get(
-                "image_path"
-            )
-
-            if case_path:
-
-                candidate = (
-                    ROOT /
-                    str(case_path)
-                )
-
+            for ext in IMAGE_EXTENSIONS:
+                candidate = DEMO_IMAGES_DIR / f"case_{dataset_val:05d}_train{ext}"
                 if candidate.exists():
-
                     image_path = candidate
-
-
+                    break
+        if image_path is None:
+            case_path = case.get("image_path")
+            if case_path:
+                candidate = ROOT / str(case_path)
+                if candidate.exists():
+                    image_path = candidate
         if image_path is not None:
-
-            current_image = (
-                Image.open(
-                    image_path
-                ).convert("RGB")
-            )
-
+            current_image = Image.open(image_path).convert("RGB")
     except Exception:
-
         current_image = None
 
-
-    # ========================================================
-    # FINDING-GUIDED VISUALIZATION
-    # ========================================================
-
     if current_image is not None:
-
         try:
+            _, overlay_image = generate_finding_guided_heatmap(current_image, observation_text)
 
-            heatmap_image, overlay_image = (
-                generate_finding_guided_heatmap(
-                    current_image,
-                    observation_text
-                )
+            left, right = st.columns([1, 1], gap="large")
+            with left:
+                render_html('<div class="img-label">Original</div>')
+                st.image(current_image, use_container_width=True)
+            with right:
+                render_html('<div class="img-label">Finding-guided view</div>')
+                st.image(overlay_image, use_container_width=True)
+
+            aff_text = (
+                f"{float(st.session_state.prototype_similarity):.5f}"
+                if st.session_state.prototype_similarity is not None else "—"
             )
-
-
-            render_html(
-                """
-                <div style="
-                    margin-top:1.4rem;
-                    margin-bottom:0.7rem;
-                    color:#8996a3;
-                    font-size:0.66rem;
-                    font-weight:750;
-                    letter-spacing:0.08em;
-                    text-transform:uppercase;
-                ">
-                    Finding-guided visualization
-                </div>
-                """
-            )
-
-
-            img_col, heat_col = st.columns(
-                [1, 1],
-                gap="large"
-            )
-
-
-            # ------------------------------------------------
-            # ORIGINAL
-            # ------------------------------------------------
-
-            with img_col:
-
-                render_html(
-                    """
-                    <div style="
-                        color:#8996a3;
-                        font-size:0.66rem;
-                        font-weight:750;
-                        letter-spacing:0.08em;
-                        text-transform:uppercase;
-                        margin-bottom:0.45rem;
-                    ">
-                        Original
-                    </div>
-                    """
-                )
-
-                st.image(
-                    current_image,
-                    use_container_width=True
-                )
-
-
-            # ------------------------------------------------
-            # HIGHLIGHTED
-            # ------------------------------------------------
-
-            with heat_col:
-
-                render_html(
-                    """
-                    <div style="
-                        color:#8996a3;
-                        font-size:0.66rem;
-                        font-weight:750;
-                        letter-spacing:0.08em;
-                        text-transform:uppercase;
-                        margin-bottom:0.45rem;
-                    ">
-                        Finding-guided region
-                    </div>
-                    """
-                )
-
-                st.image(
-                    overlay_image,
-                    use_container_width=True
-                )
-
-
-            # ------------------------------------------------
-            # INTERPRETATION CARD
-            # ------------------------------------------------
-
+            proto_text = f"P{int(prototype_id):02d}" if prototype_id is not None else "—"
             render_html(
                 f"""
-                <div style="
-                    margin-top:0.65rem;
-                    padding:0.85rem 1rem;
-                    border:1px solid rgba(255,255,255,0.07);
-                    border-radius:10px;
-                    background:rgba(255,255,255,0.025);
-                    color:#8996a3;
-                    font-size:0.72rem;
-                    line-height:1.55;
-                ">
-
-                    <div style="
-                        color:#cfd6dd;
-                        font-weight:700;
-                        margin-bottom:0.25rem;
-                    ">
-                        Highlighted region
-                    </div>
-
-                    The visualization emphasizes the image region
-                    most consistent with the anatomical and finding
-                    cues contained in the precomputed observation:
-
-                    <span style="
-                        color:#d7dde3;
-                        font-style:italic;
-                    ">
-                        "{html.escape(str(observation_text))}"
-                    </span>
-
+                <div class="compact-line">
+                    Prototype {html.escape(proto_text)} · Affinity {html.escape(aff_text)} ·
+                    {len(results)} retrieved cases
                 </div>
+                <div class="muted">Research visualization; not a clinical localization.</div>
                 """
             )
-
-
         except Exception:
-
-            render_html(
-                """
-                <div class="empty">
-                    <div class="empty-x">
-                        Finding-guided visualization could not
-                        be generated.
-                    </div>
-                </div>
-                """
-            )
-
-
+            empty_state("Finding-guided visualization could not be generated")
     else:
-
-        render_html(
-            """
-            <div class="empty">
-                <div class="empty-x">
-                    Original image unavailable for visual evidence.
-                </div>
-            </div>
-            """
-        )
+        empty_state("Original image unavailable for visual evidence")
 
 
-    # ========================================================
-    # RETRIEVED EVIDENCE
-    # ========================================================
-
-    render_html(
-        """
-        <div style="
-            margin-top:1.5rem;
-            margin-bottom:0.7rem;
-            color:#8996a3;
-            font-size:0.66rem;
-            font-weight:750;
-            letter-spacing:0.08em;
-            text-transform:uppercase;
-        ">
-            Retrieved evidence
-        </div>
-        """
-    )
-
-
-    left, right = st.columns(
-        [1.15, 1],
-        gap="large"
-    )
-
-
-    # ========================================================
-    # NEAREST NEIGHBOURS
-    # ========================================================
-
-    with left:
-
-        if results:
-
-            rows_html = (
-                '<div class="neighbors">'
-                '<div class="hdr">Case</div>'
-                '<div class="hdr">Prototype</div>'
-                '<div class="hdr">Similarity</div>'
-            )
-
-            for r in results:
-
-                rows_html += (
-
-                    f'<div class="cell">'
-                    f'{int(r["dataset_index"])}'
-                    f'</div>'
-
-                    f'<div class="cell muted">'
-                    f'P{int(r["prototype_id"]):02d}'
-                    f'</div>'
-
-                    f'<div class="cell">'
-                    f'{float(r["similarity"]):.5f}'
-                    f'</div>'
-                )
-
-            rows_html += "</div>"
-
-
-            render_html(
-                f"""
-                <div style="
-                    margin-bottom:0.3rem;
-                    color:#8996a3;
-                    font-size:0.66rem;
-                    font-weight:750;
-                    letter-spacing:0.08em;
-                    text-transform:uppercase;
-                ">
-                    Nearest visual neighbours
-                </div>
-
-                {rows_html}
-                """
-            )
-
-        else:
-
-            render_html(
-                """
-                <div class="empty">
-                    <div class="empty-x">
-                        No reference cases retrieved.
-                    </div>
-                </div>
-                """
-            )
-
-
-    # ========================================================
-    # OBSERVATION
-    # ========================================================
-
-    with right:
-
-        render_html(
-            f"""
-            <div class="obs-card">
-
-                <div class="obs-label">
-                    Interpretation
-                </div>
-
-                <div class="obs-text"
-                     style="font-style:italic;">
-                    "{html.escape(str(observation_text))}"
-                </div>
-
-            </div>
-            """
-        )
-
-
-    # ========================================================
-    # RETRIEVAL NOTE
-    # ========================================================
-
-    render_html(
-        """
-        <div class="muted">
-            Similarity reflects visual embedding proximity,
-            not clinical equivalence.
-        </div>
-        """
-    )
-
-
-    # ========================================================
-    # HOW IT WORKS
-    # ========================================================
-
-    with st.expander(
-        "▸ How the evidence layer works",
-        expanded=False
-    ):
-
-        render_html(
-            """
-            <div style="
-                color:#a3aeb9;
-                font-size:0.78rem;
-                line-height:1.55;
-            ">
-
-                <b style="color:#cfd6dd;">1.</b>
-                The selected image has a precomputed 1152-D
-                MedGemma visual embedding.
-
-                <br>
-
-                <b style="color:#cfd6dd;">2.</b>
-                The embedding is compared against the reference
-                medical image database.
-
-                <br>
-
-                <b style="color:#cfd6dd;">3.</b>
-                Nearest visual neighbours are retrieved using
-                cosine similarity.
-
-                <br>
-
-                <b style="color:#cfd6dd;">4.</b>
-                The image is assigned to a learned visual
-                prototype.
-
-                <br>
-
-                <b style="color:#cfd6dd;">5.</b>
-                Prototype representatives provide additional
-                visual context.
-
-                <br>
-
-                <b style="color:#cfd6dd;">6.</b>
-                The explainability view provides a
-                finding-guided visualization based on the
-                precomputed model observation and image
-                characteristics.
-
-                <br><br>
-
-                <span style="color:#7a8692;">
-                    This visualization is not Grad-CAM,
-                    lesion segmentation, or a clinically validated
-                    localization method.
-                </span>
-
-            </div>
-            """
-        )
-
-
-    # ========================================================
-    # INTERPRETATION BOUNDARY
-    # ========================================================
-
-    with st.expander(
-        "▸ Interpretation boundary",
-        expanded=False
-    ):
-
-        render_html(
-            """
-            <div style="
-                color:#a3aeb9;
-                font-size:0.78rem;
-                line-height:1.55;
-            ">
-
-                <b style="color:#cfc4a3;">
-                    Boundaries:
-                </b>
-
-                <ul style="
-                    margin-top:0.3rem;
-                    padding-left:1.1rem;
-                ">
-
-                    <li>
-                        The highlighted region is a
-                        finding-guided visualization, not a
-                        clinical lesion mask.
-                    </li>
-
-                    <li>
-                        It does not represent MedGemma gradients
-                        or causal attribution.
-                    </li>
-
-                    <li>
-                        Prototypes are latent visual groupings,
-                        not clinical concepts.
-                    </li>
-
-                    <li>
-                        Similarity indicates embedding-space
-                        proximity, not clinical equivalence.
-                    </li>
-
-                    <li>
-                        MedGemma observations are model-generated
-                        and are not clinical diagnoses.
-                    </li>
-
-                </ul>
-
-            </div>
-            """
-        )
 # ============================================================
 # 06 — ASK ABOUT THIS IMAGE
 # ============================================================
 
-section_header(
-    "06", "Ask About This Image",
-    "Ask about the image, retrieved evidence, or prototype",
-)
+section_header("06", "Ask About This Image", "Explore the finding and visual evidence")
 
 if case is None:
-    render_html(
-        """
-        <div class="empty">
-            <div class="empty-t">Select a prepared image first</div>
-            <div class="empty-x">
-                The assistant answers questions supported by the
-                prepared evidence for the selected case.
-            </div>
-        </div>
-        """
+    empty_state(
+        "Select a prepared image first",
+        "The assistant answers questions supported by the prepared evidence for the selected case.",
     )
 else:
     chat_context = build_case_context()
 
     quick_questions = [
         "What does the model see?",
-        "Why is this case similar?",
-        "What is the prototype?",
-        "What evidence is available?",
+        "Where is the finding?",
+        "Why this prototype?",
+        "What are the similar cases?",
     ]
 
     qcols = st.columns(len(quick_questions))
@@ -2534,20 +1206,11 @@ else:
                 key=f"q_{qtext}_{st.session_state.image_hash or 'x'}",
                 use_container_width=True,
             ):
+                st.session_state.chat_history.append({"role": "user", "content": qtext})
                 st.session_state.chat_history.append(
-                    {"role": "user", "content": qtext}
+                    {"role": "assistant", "content": answer_user_question(qtext, chat_context)}
                 )
-                st.session_state.chat_history.append(
-                    {
-                        "role": "assistant",
-                        "content": answer_user_question(
-                            qtext, chat_context
-                        ),
-                    }
-                )
-                st.session_state.chat_history = (
-                    st.session_state.chat_history[-MAX_CHAT_TURNS:]
-                )
+                st.session_state.chat_history = st.session_state.chat_history[-MAX_CHAT_TURNS:]
                 st.rerun()
 
     if st.session_state.chat_history:
@@ -2555,51 +1218,44 @@ else:
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
     else:
-        render_html(
-            """
-            <div class="empty" style="margin-top:0.35rem;">
-                <div class="empty-t">No messages yet</div>
-                <div class="empty-x">
-                    Ask a question below, or use one of the quick
-                    questions above.
-                </div>
-            </div>
-            """
-        )
+        st.caption("Ask a question about this case.")
 
-    user_prompt = st.chat_input(
-        "Ask a question about this image..."
-    )
+    user_prompt = st.chat_input("Ask a question about this image...")
 
     if user_prompt:
-        st.session_state.chat_history.append(
-            {"role": "user", "content": user_prompt}
-        )
-        assistant_reply = answer_user_question(
-            user_prompt, chat_context
-        )
-        st.session_state.chat_history.append(
-            {"role": "assistant", "content": assistant_reply}
-        )
-        st.session_state.chat_history = (
-            st.session_state.chat_history[-MAX_CHAT_TURNS:]
-        )
-
-        with st.chat_message("user"):
-            st.markdown(user_prompt)
-        with st.chat_message("assistant"):
-            st.markdown(assistant_reply)
+        st.session_state.chat_history.append({"role": "user", "content": user_prompt})
+        assistant_reply = answer_user_question(user_prompt, chat_context)
+        st.session_state.chat_history.append({"role": "assistant", "content": assistant_reply})
+        st.session_state.chat_history = st.session_state.chat_history[-MAX_CHAT_TURNS:]
+        st.rerun()
 
 
 # ============================================================
-# FOOTER
+# TECHNICAL DETAILS (collapsed, minimal)
+# ============================================================
+
+with st.expander("Technical details", expanded=False):
+    debug = st.session_state.get("debug") or {}
+    db_shape = debug.get("db_shape")
+    st.markdown(
+        f"""
+- Embedding dimension: `{db_shape[1] if db_shape else "—"}`
+- Prototype ID: `{debug.get("prototype_id", "—")}`
+- Prototype affinity: `{f"{st.session_state.prototype_similarity:.5f}" if st.session_state.prototype_similarity is not None else "—"}`
+- Retrieved cases: `{debug.get("unique_retrieved", 0)} / {debug.get("requested", MAX_SIMILAR_CASES)}`
+- Retrieval method: cosine similarity over precomputed MedGemma visual embeddings
+"""
+    )
+
+
+# ============================================================
+# FOOTER (must remain the final rendered element)
 # ============================================================
 
 render_html(
-    """
+    f"""
     <div class="footer">
-        Explainable Medical VLM · MedGemma · Visual Retrieval ·
-        Prototype-Grounded Evidence
+        {html.escape(APP_NAME)} · Medical VLM · Visual Evidence · Prototype Retrieval
         <br>
         Research demonstration only · Not for clinical diagnosis
     </div>
