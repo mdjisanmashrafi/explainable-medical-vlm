@@ -616,33 +616,90 @@ if st.session_state["last_error"]:
     st.session_state["last_error"] = None
 
 
+```python
 # ============================================================
 # FOLLOW-UP CONVERSATION
 # ============================================================
 
-if st.session_state["chat_history"]:
-    st.markdown('<div class="section-label">Conversation</div>', unsafe_allow_html=True)
-    for msg in st.session_state["chat_history"]:
-        with st.chat_message("user" if msg["role"] == "user" else "assistant"):
-            st.write(msg["content"])
+st.markdown("<br>", unsafe_allow_html=True)
+st.markdown(
+    '<div class="section-label">Conversation</div>',
+    unsafe_allow_html=True,
+)
 
-follow_up = st.chat_input("Ask a follow-up question about this image")
-if follow_up:
+# Display existing conversation
+for msg in st.session_state["chat_history"]:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
+
+
+# Follow-up question input
+follow_up = st.chat_input(
+    "Ask a follow-up question about this image"
+)
+
+if follow_up and follow_up.strip():
+
+    follow_up = follow_up.strip()
+
+    # Show the user's new question immediately
+    st.session_state["chat_history"].append(
+        {
+            "role": "user",
+            "content": follow_up,
+        }
+    )
+
     with st.spinner("Thinking..."):
+
         try:
+            # Build context from previous conversation.
+            # The current question is NOT added twice.
+            previous_history = (
+                st.session_state["chat_history"][:-1]
+            )
+
             contextual_question = build_question_with_context(
-                follow_up.strip(), st.session_state["chat_history"]
+                follow_up,
+                previous_history,
             )
-            answer = call_analyze_image(image, contextual_question)
+
+            # Send the CURRENT IMAGE + CURRENT QUESTION
+            answer = call_analyze_image(
+                image,
+                contextual_question,
+            )
+
+            # Store MedGemma response
             st.session_state["chat_history"].append(
-                {"role": "user", "content": follow_up.strip()}
+                {
+                    "role": "assistant",
+                    "content": answer,
+                }
             )
-            st.session_state["chat_history"].append(
-                {"role": "assistant", "content": answer}
-            )
-            st.rerun()
+
+            # Clear any previous error
+            st.session_state["last_error"] = None
+
         except BackendError as exc:
-            st.error(str(exc))
+
+            # Remove the user question if the backend failed
+            st.session_state["chat_history"].pop()
+
+            st.session_state["last_error"] = str(exc)
+
+    # Force Streamlit to redraw the conversation
+    st.rerun()
+
+
+# Display backend error if one occurred
+if st.session_state["last_error"]:
+    st.error(
+        st.session_state["last_error"]
+    )
+    st.session_state["last_error"] = None
+```
+
 
 
 # ============================================================
