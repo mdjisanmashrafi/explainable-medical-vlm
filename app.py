@@ -1220,7 +1220,6 @@ else:
     else:
         st.caption("Ask a question about this case.")
 
-    user_prompt = st.chat_input("Ask a question about this image...")
 
     if user_prompt:
         st.session_state.chat_history.append({"role": "user", "content": user_prompt})
