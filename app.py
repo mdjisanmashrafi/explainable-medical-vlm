@@ -1230,34 +1230,3 @@ else:
         st.rerun()
 
 
-# ============================================================
-# TECHNICAL DETAILS (collapsed, minimal)
-# ============================================================
-
-with st.expander("Technical details", expanded=False):
-    debug = st.session_state.get("debug") or {}
-    db_shape = debug.get("db_shape")
-    st.markdown(
-        f"""
-- Embedding dimension: `{db_shape[1] if db_shape else "—"}`
-- Prototype ID: `{debug.get("prototype_id", "—")}`
-- Prototype affinity: `{f"{st.session_state.prototype_similarity:.5f}" if st.session_state.prototype_similarity is not None else "—"}`
-- Retrieved cases: `{debug.get("unique_retrieved", 0)} / {debug.get("requested", MAX_SIMILAR_CASES)}`
-- Retrieval method: cosine similarity over precomputed MedGemma visual embeddings
-"""
-    )
-
-
-# ============================================================
-# FOOTER (must remain the final rendered element)
-# ============================================================
-
-render_html(
-    f"""
-    <div class="footer">
-        {html.escape(APP_NAME)} · Medical VLM · Visual Evidence · Prototype Retrieval
-        <br>
-        Research demonstration only · Not for clinical diagnosis
-    </div>
-    """
-)
