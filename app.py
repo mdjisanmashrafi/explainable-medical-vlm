@@ -361,7 +361,7 @@ def run_full_pipeline(
         visual_embeddings,
         valid_indices,
         cluster_labels,
-        top_k=10, 
+        top_k=3, 
     )
 
     st.session_state["query_embedding"] = query_embedding_vector
