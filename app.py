@@ -718,17 +718,25 @@ def run_precomputed_case(demo_case, query_image_hash=None):
 # ============================================================
 # CHAT ANSWER LAYER
 # ============================================================
-
 def build_case_context():
     if not st.session_state.demo_case:
         return None
+
     return {
-        "dataset_index": int(st.session_state.demo_case.get("dataset_index", -1)),
+        "dataset_index": int(
+            st.session_state.demo_case.get("dataset_index", -1)
+        ),
         "prototype_id": st.session_state.prototype_id,
-        "prototype_affinity": st.session_state.prototype_similarity,
+        "prototype_similarity": st.session_state.prototype_similarity,
         "analysis": st.session_state.analysis,
-        "qa": parse_qa(st.session_state.demo_case.get("qa")),
-        "retrieval": list(st.session_state.retrieval_results or []),
+        "answer": st.session_state.analysis,
+        "observation": st.session_state.analysis,
+        "qa": parse_qa(
+            st.session_state.demo_case.get("qa")
+        ),
+        "retrieval_results": list(
+            st.session_state.retrieval_results or []
+        ),
     }
 
 
