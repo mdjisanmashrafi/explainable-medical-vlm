@@ -363,6 +363,7 @@ def run_full_pipeline(
         cluster_labels,
         top_k=3, 
     )
+    st.write("DEBUG RETRIEVAL:", results)
 
     st.session_state["query_embedding"] = query_embedding_vector
     st.session_state["retrieval_results"] = results
