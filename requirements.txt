@@ -1,7 +1,6 @@
 streamlit
 numpy
 pandas
-scikit-learn
 joblib
-Pillow
-gradio_client
+pillow
+scikit-learn
